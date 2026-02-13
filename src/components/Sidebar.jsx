@@ -99,7 +99,7 @@ const Sidebar = ({ onSelect }) => {
                   </ListItem>
 
                   <ListItem disablePadding>
-                    <ListItemButton component={Link} to="/admin/edit-user">
+                    <ListItemButton component={Link} to="/admin/manage-users">
                       <ListItemIcon><PersonAddIcon /></ListItemIcon>
                       <ListItemText primary="Edit User" />
                     </ListItemButton>
