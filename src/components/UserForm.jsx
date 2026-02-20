@@ -43,16 +43,9 @@ const UserForm = ({ onSubmit, initialData = {}, isEditing = false, theme }) => {
 
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  // determine current role (admin vs distributor) from redux, localStorage fallback
+  // determine current role from redux auth state
   const reduxUser = useSelector((s) => s.user?.user);
-  let _storedUser = null;
-  try {
-    _storedUser = JSON.parse(localStorage.getItem('user') || 'null');
-  } catch (e) {
-    _storedUser = null;
-  }
-  const _adminTokenPresent = !!localStorage.getItem('adminToken');
-  const currentRole = _adminTokenPresent ? 'admin' : (reduxUser?.role || _storedUser?.role || 'user');
+  const currentRole = reduxUser?.role || 'user';
   const isDistributorEditing = isEditing && currentRole === 'distributor';
   
 
@@ -141,17 +134,17 @@ const UserForm = ({ onSubmit, initialData = {}, isEditing = false, theme }) => {
         </Grid>
 
         <Grid item xs={12} md={6}>
-          <TextField fullWidth required type="number" name="hinsaMultiplier" label="HINSA Multiplier" value={formData.hinsaMultiplier} onChange={handleChange} InputProps={{ startAdornment: (<InputAdornment position="start"><CalculateIcon /></InputAdornment>) }} />
+          <TextField fullWidth required type="number" name="hinsaMultiplier" label="Figure Prize" value={formData.hinsaMultiplier} onChange={handleChange} InputProps={{ startAdornment: (<InputAdornment position="start"><CalculateIcon /></InputAdornment>) }} />
         </Grid>
         <Grid item xs={12} md={6}>
-          <TextField fullWidth required type="number" name="akraMultiplier" label="AKRA Multiplier" value={formData.akraMultiplier} onChange={handleChange} InputProps={{ startAdornment: (<InputAdornment position="start"><CalculateIcon /></InputAdornment>) }} />
+          <TextField fullWidth required type="number" name="akraMultiplier" label="ARKRA Prize" value={formData.akraMultiplier} onChange={handleChange} InputProps={{ startAdornment: (<InputAdornment position="start"><CalculateIcon /></InputAdornment>) }} />
         </Grid>
 
         <Grid item xs={12} md={6}>
-          <TextField fullWidth required type="number" name="tandolaMultiplier" label="TANDOLA Multiplier" value={formData.tandolaMultiplier} onChange={handleChange} InputProps={{ startAdornment: (<InputAdornment position="start"><CalculateIcon /></InputAdornment>) }} />
+          <TextField fullWidth required type="number" name="tandolaMultiplier" label="Tandola Prize" value={formData.tandolaMultiplier} onChange={handleChange} InputProps={{ startAdornment: (<InputAdornment position="start"><CalculateIcon /></InputAdornment>) }} />
         </Grid>
         <Grid item xs={12} md={6}>
-          <TextField fullWidth required type="number" name="pangoraMultiplier" label="PANGORA Multiplier" value={formData.pangoraMultiplier} onChange={handleChange} InputProps={{ startAdornment: (<InputAdornment position="start"><CalculateIcon /></InputAdornment>) }} />
+          <TextField fullWidth required type="number" name="pangoraMultiplier" label="Pangora Prize" value={formData.pangoraMultiplier} onChange={handleChange} InputProps={{ startAdornment: (<InputAdornment position="start"><CalculateIcon /></InputAdornment>) }} />
         </Grid>
 
         <Grid item xs={12} md={6}>

@@ -1,11 +1,10 @@
-import React, { useEffect } from "react";
+import React from "react";
 import { Navigate } from "react-router-dom";
+import { useSelector } from 'react-redux';
 
 export default function DistributorProtectedRoute({ children }) {
-
-  if (localStorage.getItem("distributorToken")) {
-    return children;
-  } else {
-    return <Navigate to="/distributor-login" />;
-  }
+  const { user, authChecked } = useSelector((s) => s.user);
+  if (!authChecked) return null;
+  if (user?.role === 'distributor') return children;
+  return <Navigate to="/distributor-login" />;
 }

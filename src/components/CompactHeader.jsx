@@ -2,7 +2,7 @@ import React from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { FaEllipsisH, FaSignOutAlt } from 'react-icons/fa';
 import { useNavigate } from 'react-router-dom';
-import { setUser } from '../redux/features/userSlice';
+import { clearUser } from '../redux/features/userSlice';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import AppBar from '@mui/material/AppBar';
@@ -11,105 +11,76 @@ import IconButton from '@mui/material/IconButton';
 import Typography from '@mui/material/Typography';
 import Box from '@mui/material/Box';
 
-const CompactHeader = ({ onToggleSidebar, drawerWidth = 240, sidebarVisible = true }) => {
+const CompactHeader = ({ onToggleSidebar }) => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
-  const reduxUserSlice = useSelector((s) => s.user);
-  let storedUser = null;
-  try {
-    storedUser = JSON.parse(localStorage.getItem('user') || 'null');
-  } catch (e) {
-    storedUser = null;
-  }
-  const adminTokenPresent = !!localStorage.getItem('adminToken');
-  const userData = reduxUserSlice || (storedUser ? { user: storedUser } : (adminTokenPresent ? { user: { username: 'admin', dealerId: '' } } : null));
+  const userData = useSelector((s) => s.user);
 
   const handleLogout = async () => {
     try {
-      dispatch(setUser(null));
+      await axios.post('/api/v1/auth/logout');
     } catch (err) {
-      // ignore
-    }
-
-    const isAdmin = adminTokenPresent;
-    const tokenKey = isAdmin ? 'adminToken' : 'token';
-    const endpoint = isAdmin ? '/api/v1/auth/admin-logout' : '/api/v1/auth/logout';
-    const token = localStorage.getItem(tokenKey);
-
-    // Attempt server-side logout (best-effort)
-    try {
-      if (token) {
-        await axios.post(endpoint, {}, { headers: { Authorization: `Bearer ${token}` } });
-      }
-    } catch (err) {
-      // ignore server logout errors — continue to clear local state
       console.warn('Server logout failed', err?.message || err);
     }
-
-    // Clear local tokens and user info
-    localStorage.removeItem(tokenKey);
-    localStorage.removeItem('user');
-    // also clear any other role token keys
-    localStorage.removeItem('distributorToken');
-
+    dispatch(clearUser());
     toast.success('Logged out');
-
-    // Redirect to appropriate login
-    navigate(isAdmin ? '/admin-login' : '/login');
+    navigate(userData?.user?.role === 'admin' ? '/admin-login' : '/login');
   };
 
-  const roleRaw = adminTokenPresent ? 'admin' : (reduxUserSlice?.user?.role || storedUser?.role || '');
+  const roleRaw = userData?.user?.role || '';
   const roleLabel = typeof roleRaw === 'string' && roleRaw ? roleRaw.charAt(0).toUpperCase() + roleRaw.slice(1) : 'User';
 
   return (
     <AppBar
       position="fixed"
       sx={{
-        left: sidebarVisible ? `${drawerWidth}px` : 0,
-        width: sidebarVisible ? `calc(100% - ${drawerWidth}px)` : '100%',
-        zIndex: (theme) => theme.zIndex.drawer + 1,
+        left: 0,
+        width: '100%',
+        zIndex: (muiTheme) => muiTheme.zIndex.drawer + 2,
         backgroundColor: 'transparent',
         boxShadow: 'none',
       }}
     >
-      <Toolbar sx={{ bgcolor: 'grey.800', color: 'common.white', p: 1.25, borderRadius: 1.5, border: '1px solid rgba(255,255,255,0.06)', position: 'relative' }}>
-        <Box sx={{ width: '100%', maxWidth: 1100, mx: 'auto', display: 'flex', alignItems: 'center', position: 'relative' }}>
+      <Toolbar
+        sx={{
+          bgcolor: 'grey.800',
+          color: 'common.white',
+          px: { xs: 1.25, sm: 2 },
+          py: 1,
+          borderRadius: 1.5,
+          border: '1px solid rgba(255,255,255,0.06)',
+          minHeight: '56px',
+        }}
+      >
+        <Box sx={{ width: '100%', display: 'flex', alignItems: 'center', gap: 1.25, minWidth: 0 }}>
           <IconButton
-          onClick={() => { if (typeof onToggleSidebar === 'function') onToggleSidebar(); }}
-          color="inherit"
-          size="small"
-          aria-label="toggle sidebar"
-          sx={{
-            position: 'absolute',
-            left: '-16%',
-            top: -10,
-            transform: 'translateX(-50%)',
-            bgcolor: 'grey.900',
-            width: 64,
-            height: 64,
-            boxShadow: 6,
-            borderRadius: '50%',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            border: '1px solid rgba(255,255,255,0.04)',
-            zIndex: 1400,
-            '&:hover': { bgcolor: 'grey.800' }
-          }}
-        >
-          <FaEllipsisH style={{ fontSize: 22 }} />
-        </IconButton>
+            onClick={() => { if (typeof onToggleSidebar === 'function') onToggleSidebar(); }}
+            color="inherit"
+            size="small"
+            aria-label="toggle sidebar"
+            sx={{
+              bgcolor: 'grey.900',
+              width: 40,
+              height: 40,
+              borderRadius: 1.5,
+              border: '1px solid rgba(255,255,255,0.08)',
+              flexShrink: 0,
+              '&:hover': { bgcolor: 'grey.700' },
+            }}
+          >
+            <FaEllipsisH style={{ fontSize: 14 }} />
+          </IconButton>
 
-        <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', color: 'common.white' }}>
-          <Typography variant="body2" sx={{ color: 'common.white', fontWeight: 600 }}>
-            {`${roleLabel} - ${userData?.user?.dealerId || '—'} - ${userData?.user?.username || ''}`}
-          </Typography>
-          <Typography variant="caption" sx={{ color: 'common.white', opacity: 0.8 }}>
-            {roleLabel}
-          </Typography>
-        </Box>
+          <Box sx={{ flexGrow: 1, minWidth: 0, display: 'flex', flexDirection: 'column', color: 'common.white' }}>
+            <Typography variant="body2" noWrap sx={{ color: 'common.white', fontWeight: 600 }}>
+              {`${roleLabel} - ${userData?.user?.dealerId || '-'} - ${userData?.user?.username || ''}`}
+            </Typography>
+            <Typography variant="caption" sx={{ color: 'common.white', opacity: 0.8 }}>
+              {roleLabel}
+            </Typography>
+          </Box>
 
-          <IconButton onClick={handleLogout} color="inherit" size="small" title="Logout" aria-label="logout">
+          <IconButton onClick={handleLogout} color="inherit" size="small" title="Logout" aria-label="logout" sx={{ flexShrink: 0 }}>
             <FaSignOutAlt />
           </IconButton>
         </Box>

@@ -1,5 +1,5 @@
 import React from 'react'
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from "axios";
 import jsPDF from "jspdf";
@@ -18,7 +18,6 @@ function Center() {
   const navigate = useNavigate();
   const dispatch = useDispatch();
   const userData = useSelector((state) => state.user);
-  const token = localStorage.getItem("token");
 
   // Winning numbers will be populated from admin settings via API;
   // start empty so we can hide the notification panel until set.
@@ -77,21 +76,10 @@ function Center() {
   useEffect(() => {
     (async () => {
       try {
-        const token = localStorage.getItem("token");
-
-        if (!token) {
-          navigate("/login");
-          return;
-        }
-
-        // Decode token to get user ID
-        const decodedToken = JSON.parse(atob(token.split(".")[1]));
-        const userId = decodedToken.id;
+        const userId = userData?.user?._id;
+        if (!userId) return;
 
         const response = await axios.get(`/api/v1/users/${userId}`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
         });
         dispatch(setUser(response.data));
       } catch (error) {
@@ -101,25 +89,52 @@ function Center() {
         setLoading && setLoading(false);
       }
     })();
-  }, [dispatch, navigate]);
+  }, [dispatch, navigate, userData?.user?._id]);
+
+  const fetchTimeSlots = useCallback(async () => {
+    try {
+      // load all time slots (admin may mark some inactive/closed)
+      const res = await axios.get('/api/v1/timeslots');
+      const slots = res.data?.timeSlots || res.data || [];
+      setDraws(Array.isArray(slots) ? slots : []);
+      setSelectedDraw((prev) => {
+        if (!prev || !prev._id) return prev;
+        const refreshed = (Array.isArray(slots) ? slots : []).find((s) => String(s._id) === String(prev._id));
+        return refreshed || null;
+      });
+    } catch (err) {
+      console.error('Failed to fetch timeslots', err);
+      setDraws([]);
+    }
+  }, []);
 
   // Fetch active timeSlots (admin-managed) so the select can show options
   useEffect(() => {
-    const fetchTimeSlots = async () => {
-      try {
-        const token = localStorage.getItem('token');
-        if (!token) return;
-        const headers = { Authorization: `Bearer ${token}` };
-        // load all time slots (admin may mark some inactive/closed)
-        const res = await axios.get('/api/v1/timeslots', { headers });
-        const slots = res.data?.timeSlots || res.data || [];
-        setDraws(slots);
-      } catch (err) {
-        console.error('Failed to fetch timeslots', err);
-      }
-    };
     fetchTimeSlots();
-  }, []);
+  }, [fetchTimeSlots]);
+
+  // Live refresh timeslots when admin updates them.
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const onTimeSlotsUpdated = () => { fetchTimeSlots(); };
+    const onStorage = (e) => {
+      if (e.key === 'timeslots:lastUpdated') fetchTimeSlots();
+    };
+    const onFocus = () => { fetchTimeSlots(); };
+    const intervalId = window.setInterval(() => {
+      // Polling fallback for cross-machine updates.
+      fetchTimeSlots();
+    }, 20000);
+    window.addEventListener('timeslots:updated', onTimeSlotsUpdated);
+    window.addEventListener('storage', onStorage);
+    window.addEventListener('focus', onFocus);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener('timeslots:updated', onTimeSlotsUpdated);
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [fetchTimeSlots]);
 
 
   const addEntry = async (customeEntries = null) => {
@@ -174,7 +189,6 @@ function Center() {
     try {
       // Send to server (do not block UI on final refresh)
       const response = await axios.post("/api/v1/data/add-data", payload, {
-        headers: { Authorization: `Bearer ${token}` },
         // timeout: 10000,
       });
 
@@ -223,7 +237,6 @@ function Center() {
 
   const fetchVoucherData = async (selectedDate, timeSlotId, category = "general") => {
     try {
-      const token = localStorage.getItem("token");
       if (!timeSlotId && !(selectedDraw && selectedDraw._id)) {
         toast.error("Please select a time slot to fetch records.");
         return [];
@@ -232,9 +245,6 @@ function Center() {
 
       const response = await axios.get("/api/v1/data/get-data", {
         params,
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
       });
 
       console.log("getDatabydate", response);
@@ -258,9 +268,6 @@ function Center() {
 
       const response = await axios.get("/api/v1/data/get-winning-numbers", {
         params,
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
       });
       if (response.data || response.data.winningNumbers) {
         const formattedNumbers = response.data.winningNumbers.map(item => ({
@@ -396,15 +403,11 @@ function Center() {
   const performDelete = async () => {
     setIsDeleting(true);
     try {
-      const token = localStorage.getItem('token');
       if (deleteDialogMode === 'single') {
-        await axios.delete(`/api/v1/data/delete-data/${deleteTargetId}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        await axios.delete(`/api/v1/data/delete-data/${deleteTargetId}`);
         toast.success('Record deleted successfully');
       } else if (deleteDialogMode === 'multiple') {
         await axios.delete(`/api/v1/data/delete-individual-entries`, {
-          headers: { Authorization: `Bearer ${token}` },
           data: { entryIds: selectedEntries }
         });
         toast.success('Selected records deleted successfully');
@@ -474,6 +477,101 @@ function Center() {
     setShowModal(false);
     setParsedEntries([]);
     setSmsInput("");
+  };
+
+  const parseSMS = (rawText = "") => {
+    const text = String(rawText || "").trim();
+    if (!text) return [];
+
+    const parsed = [];
+
+    // 1) Compact SMS parser first:
+    // Example: "93=07=...=85.f50s50" or "... s50f50"
+    // Means list of numbers + one global F/S pair at end.
+    const compact = text.replace(/\s+/g, " ").trim();
+    let globalF = null;
+    let globalS = null;
+    let numbersPart = compact;
+
+    const fsMatch = compact.match(/f\s*(\d+)\s*[^0-9a-zA-Z]*\s*s\s*(\d+)\s*$/i);
+    const sfMatch = compact.match(/s\s*(\d+)\s*[^0-9a-zA-Z]*\s*f\s*(\d+)\s*$/i);
+
+    if (fsMatch) {
+      globalF = fsMatch[1];
+      globalS = fsMatch[2];
+      numbersPart = compact.slice(0, fsMatch.index).trim();
+    } else if (sfMatch) {
+      globalS = sfMatch[1];
+      globalF = sfMatch[2];
+      numbersPart = compact.slice(0, sfMatch.index).trim();
+    }
+
+    if (globalF !== null && globalS !== null) {
+      const rawTokens = numbersPart.split(/[=.\s,;|:/\\-]+/).filter(Boolean);
+      for (const token of rawTokens) {
+        const noPart = token.replace(/[^+0-9]/g, "");
+        if (!noPart) continue;
+        if (!/^[+0-9]{1,16}$/.test(noPart)) continue;
+        if (!/\d/.test(noPart)) continue;
+        parsed.push({ no: noPart, f: String(globalF), s: String(globalS) });
+      }
+    }
+
+    // 2) Standard triplet parser: NO F S (space/comma/colon/pipe separated)
+    if (parsed.length === 0) {
+      const lines = text
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+      for (const line of lines) {
+        const normalized = line
+          .replace(/\b(no|number|num)\b\s*[:=]*/gi, " ")
+          .replace(/\b(f|first)\b\s*[:=]*/gi, " ")
+          .replace(/\b(s|second)\b\s*[:=]*/gi, " ")
+          .replace(/[|,;:/\\=-]+/g, " ")
+          .replace(/\s+/g, " ")
+          .trim();
+        if (!normalized) continue;
+        const parts = normalized.split(" ");
+        if (parts.length < 3) continue;
+
+        const noPart = String(parts[0] || "").trim();
+        const fPart = String(parts[1] || "").trim();
+        const sPart = String(parts[2] || "").trim();
+
+        if (/^[+0-9]{1,16}$/.test(noPart) && /^\d{1,10}$/.test(fPart) && /^\d{1,10}$/.test(sPart)) {
+          parsed.push({ no: noPart, f: fPart, s: sPart });
+        }
+      }
+    }
+
+    // 3) Final fallback: flat triplets blob "123 10 0 456 20 0"
+    if (parsed.length === 0) {
+      const blob = text
+        .replace(/\b(no|number|num|f|first|s|second)\b\s*[:=]*/gi, " ")
+        .replace(/[|,;:/\\=-]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      const tokens = blob ? blob.split(" ") : [];
+      for (let i = 0; i + 2 < tokens.length; i += 3) {
+        const noPart = String(tokens[i] || "").trim();
+        const fPart = String(tokens[i + 1] || "").trim();
+        const sPart = String(tokens[i + 2] || "").trim();
+        if (/^[+0-9]{1,16}$/.test(noPart) && /^\d{1,10}$/.test(fPart) && /^\d{1,10}$/.test(sPart)) {
+          parsed.push({ no: noPart, f: fPart, s: sPart });
+        }
+      }
+    }
+
+    // De-duplicate exact repeats to avoid accidental double inserts from SMS noise.
+    const seen = new Set();
+    return parsed.filter((item) => {
+      const key = `${item.no}|${item.f}|${item.s}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
   };
 
   const handleConfirmPaste = async () => {
@@ -613,27 +711,6 @@ function Center() {
       setTimeout(() => noInputRef.current?.focus(), 50);
     }
   };
-
-
-  // // logout th user 
-  // // utils/auth.js (or inside any component)
-
-  // const handleLogout = (navigate) => {
-  //   localStorage.removeItem("token");
-  //   localStorage.removeItem("user"); // if you're storing user info
-  //   // Optionally show a toast
-  //   toast.success("Logged out successfully!");
-  //   // Navigate to login
-  //   navigate("/login");
-  // };
-
-
-
-
-
-
-
-  
 
   if (loading) {  // this is loading that is running in seprately 
     return <p className="text-center text-lg"><Spinner /></p>;
@@ -1493,7 +1570,6 @@ function Center() {
   // Add this function in your Center component
   const fetchCombinedVoucherData = async (selectedDate, selectedTimeSlot) => {
     try {
-      const token = localStorage.getItem("token");
       if (!(selectedDraw && selectedDraw._id)) {
         toast.error("Please select a time slot to fetch combined records.");
         return [];
@@ -1502,9 +1578,6 @@ function Center() {
 
       const response = await axios.get("/api/v1/data/get-data", {
         params,
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
       });
 
       const records = response.data.data || [];
@@ -3194,9 +3267,9 @@ function Center() {
 
 
   return (
-    <div className="flex-1 flex flex-col overflow-auto w-full" style={{ minHeight: 'calc(100vh - 96px)', width: '100%', boxSizing: 'border-box', paddingLeft: 0 }}>
+    <div className="flex-1 flex flex-col overflow-y-auto overflow-x-hidden w-full" style={{ minHeight: 'calc(100vh - 96px)', width: '100%', boxSizing: 'border-box', paddingLeft: 0 }}>
 
-      <Box sx={{ width: '100%', maxWidth: 1200, mx: 'auto', display: 'flex', gap: 3, alignItems: 'flex-start', mt: 2, px: 2 }}>
+      <Box sx={{ width: '100%', maxWidth: 1280, mx: 0, display: 'flex', gap: { xs: 1.5, md: 2 }, alignItems: 'flex-start', mt: 2, px: { xs: 1.25, sm: 2 } }}>
         
         {/* <Box sx={{ flex: 1 }}>
           {userData?.user?.role === 'distributor' ? (
@@ -3210,40 +3283,40 @@ function Center() {
           )}
         </Box> */}
 
-        <Box component={Paper} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', bgcolor: 'grey.800', color: 'common.white', p: 1, borderRadius: 1.5, border: '1px solid rgba(255,255,255,0.06)' }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, minWidth: 0 }}>
+        <Box component={Paper} sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', rowGap: 1.25, columnGap: 1, width: '100%', bgcolor: 'grey.800', color: 'common.white', p: { xs: 0.9, md: 1 }, borderRadius: 1.5, border: '1px solid rgba(255,255,255,0.06)' }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, minWidth: 0, width: { xs: '100%', xl: 'auto' } }}>
             <FaBalanceScale className="text-blue-400" style={{ fontSize: 20 }} />
             <Typography variant="subtitle1" sx={{ color: 'grey.200', fontWeight: 700, mr: 1, letterSpacing: 0.6 }}>BALANCE</Typography>
-            <Box sx={{ bgcolor: 'grey.900', px: 2.25, py: 0.7, borderRadius: 1, border: '1px solid rgba(255,255,255,0.06)', minWidth: 160, textAlign: 'right' }}>
+            <Box sx={{ bgcolor: 'grey.900', px: { xs: 1.5, md: 2.25 }, py: 0.7, borderRadius: 1, border: '1px solid rgba(255,255,255,0.06)', minWidth: { xs: 132, sm: 160 }, textAlign: 'right' }}>
               <Typography variant="h6" sx={{ color: 'grey.100', fontWeight: 800, fontSize: '1.05rem' }}>
                 {(() => { const raw = userData?.user?.balance; const num = Number(raw); return !isNaN(num) ? num.toLocaleString() : (raw ?? '-'); })()}
               </Typography>
             </Box>
           </Box>
 
-          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flex: 1, justifyContent: 'center', minWidth: 0 }}>
-              <Box sx={{ display: 'flex', gap: 1.25, alignItems: 'center' }}>
-              <Box sx={{ bgcolor: 'grey.900', px: 2.25, py: 0.65, borderRadius: 1, border: '1px solid rgba(255,255,255,0.06)', textAlign: 'center', minWidth: 92 }}>
+          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flex: 1, justifyContent: { xs: 'flex-start', xl: 'center' }, minWidth: 0, width: { xs: '100%', xl: 'auto' } }}>
+              <Box sx={{ display: 'flex', gap: 1.25, alignItems: 'center', flexWrap: 'wrap' }}>
+              <Box sx={{ bgcolor: 'grey.900', px: { xs: 1.25, md: 2.25 }, py: 0.65, borderRadius: 1, border: '1px solid rgba(255,255,255,0.06)', textAlign: 'center', minWidth: { xs: 76, sm: 92 } }}>
                 <Typography variant="body2" sx={{ color: 'grey.400', fontWeight: 600, mb: 0.25 }}>Count</Typography>
                 <Typography variant="subtitle1" sx={{ color: 'grey.100', fontWeight: 800 }}>{distributorRecordCount}</Typography>
               </Box>
-              <Box sx={{ bgcolor: 'grey.900', px: 2.25, py: 0.65, borderRadius: 1, border: '1px solid rgba(255,255,255,0.06)', textAlign: 'center', minWidth: 92 }}>
+              <Box sx={{ bgcolor: 'grey.900', px: { xs: 1.25, md: 2.25 }, py: 0.65, borderRadius: 1, border: '1px solid rgba(255,255,255,0.06)', textAlign: 'center', minWidth: { xs: 76, sm: 92 } }}>
                 <Typography variant="body2" sx={{ color: 'grey.400', fontWeight: 600, mb: 0.25 }}>Total</Typography>
                 <Typography variant="subtitle1" sx={{ color: 'grey.100', fontWeight: 800 }}>{(() => { const n = Number(distributorGrandTotal); return !isNaN(n) ? n.toLocaleString() : '-'; })()}</Typography>
               </Box>
-              <Box sx={{ bgcolor: 'grey.900', px: 2.25, py: 0.65, borderRadius: 1, border: '1px solid rgba(255,255,255,0.06)', textAlign: 'center', minWidth: 92 }}>
+              <Box sx={{ bgcolor: 'grey.900', px: { xs: 1.25, md: 2.25 }, py: 0.65, borderRadius: 1, border: '1px solid rgba(255,255,255,0.06)', textAlign: 'center', minWidth: { xs: 76, sm: 92 } }}>
                 <Typography variant="body2" sx={{ color: 'grey.400', fontWeight: 600, mb: 0.25 }}>First</Typography>
                 <Typography variant="subtitle1" sx={{ color: 'grey.100', fontWeight: 800 }}>{(() => { const n = Number(distributorFirstTotal); return !isNaN(n) ? n.toLocaleString() : '-'; })()}</Typography>
               </Box>
-              <Box sx={{ bgcolor: 'grey.900', px: 2.25, py: 0.65, borderRadius: 1, border: '1px solid rgba(255,255,255,0.06)', textAlign: 'center', minWidth: 92 }}>
+              <Box sx={{ bgcolor: 'grey.900', px: { xs: 1.25, md: 2.25 }, py: 0.65, borderRadius: 1, border: '1px solid rgba(255,255,255,0.06)', textAlign: 'center', minWidth: { xs: 76, sm: 92 } }}>
                 <Typography variant="body2" sx={{ color: 'grey.400', fontWeight: 600, mb: 0.25 }}>Second</Typography>
                 <Typography variant="subtitle1" sx={{ color: 'grey.100', fontWeight: 800 }}>{(() => { const n = Number(distributorSecondTotal); return !isNaN(n) ? n.toLocaleString() : '-'; })()}</Typography>
               </Box>
             </Box>
           </Box>
 
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 220, justifyContent: 'flex-end' }}>
-            <input type="date" value={drawDate} onChange={(e) => setDrawDate(e.target.value)} style={{ background: 'transparent', color: '#fff', padding: '6px 10px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.12)', outline: 'none' }} />
+          <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1, minWidth: { xs: '100%', lg: 220 }, justifyContent: { xs: 'flex-start', xl: 'flex-end' }, width: { xs: '100%', lg: 'auto' } }}>
+            <input type="date" value={drawDate} onChange={(e) => setDrawDate(e.target.value)} style={{ background: 'transparent', color: '#fff', padding: '6px 10px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.12)', outline: 'none', minWidth: '150px', flex: '1 1 150px' }} />
 
             <select
               value={selectedDraw?._id || ""}
@@ -3254,7 +3327,7 @@ function Center() {
                   toast.error('Time slot is closed');
                 }
               }}
-              style={{ background: 'transparent', color: selectedDraw ? '#000' : '#fff', padding: '6px 10px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.08)' }}
+              style={{ background: 'transparent', color: selectedDraw ? '#000' : '#fff', padding: '6px 10px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.08)', minWidth: '170px', flex: '1 1 170px' }}
             >
               <option value="" style={{ color: '#fff' }}>-- Select Time Slot --</option>
               {Array.isArray(draws) && draws.slice().sort((a,b)=>{
@@ -3266,7 +3339,7 @@ function Center() {
               ))}
             </select>
 
-            <Button variant="outlined" color="inherit" onClick={() => {
+            <Button variant="outlined" color="inherit" sx={{ minWidth: { xs: 90, sm: 96 }, whiteSpace: 'nowrap' }} onClick={() => {
               if (selectedDraw && selectedDraw.isActive === false) {
                 toast.error('Selected time slot is closed.');
                 return;
@@ -3280,17 +3353,17 @@ function Center() {
       </Box> 
 
       {/* Two-column section: left = Table, right = Action Buttons */}
-      <Box sx={{ width: '100%', maxWidth: 1200, mx: 'auto', display: 'flex', gap: 3, alignItems: 'flex-start', mt: 4, px: 2 }}>
-        <Box sx={{ flex: 1 }}>
-          <Paper elevation={3} sx={{ bgcolor: 'grey.900', color: 'grey.100', minHeight: '62vh', p: 3, borderRadius: 2, display: 'flex', flexDirection: 'column' }}>
+      <Box sx={{ width: '100%', maxWidth: 1280, mx: 0, display: 'flex', flexDirection: { xs: 'column', lg: 'row' }, gap: { xs: 2, lg: 3 }, alignItems: 'stretch', mt: 3, px: { xs: 1.25, sm: 2 } }}>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Paper elevation={3} sx={{ bgcolor: '#111318', color: '#F9FAFB', minHeight: '62vh', p: 3, borderRadius: 2, display: 'flex', flexDirection: 'column', border: '1px solid rgba(255,255,255,0.08)' }}>
 
             {/* Table Header */}
             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <Button variant="contained" color="error" onClick={openDeleteSelectedConfirm}>Delete Selected</Button>
-                <Button variant="contained" color="success" onClick={handleCopySelected}>Copy</Button>
-                <Button variant="contained" color="primary" onClick={handlePasteCopied}>Paste</Button>
-                <Button variant="contained" color="secondary" onClick={() => { setSmsInput(""); setParsedEntries([]); setShowModal(true); }}>Paste SMS</Button>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                <Button variant="contained" color="error" onClick={openDeleteSelectedConfirm} sx={{ fontSize: 14, fontWeight: 600, letterSpacing: 0.2 }}>Delete Selected</Button>
+                <Button variant="contained" color="success" onClick={handleCopySelected} sx={{ fontSize: 14, fontWeight: 600, letterSpacing: 0.2 }}>Copy</Button>
+                <Button variant="contained" color="primary" onClick={handlePasteCopied} sx={{ fontSize: 14, fontWeight: 600, letterSpacing: 0.2 }}>Paste</Button>
+                <Button variant="contained" color="secondary" onClick={() => { setSmsInput(""); setParsedEntries([]); setShowModal(true); }} sx={{ fontSize: 14, fontWeight: 600, letterSpacing: 0.2 }}>Paste SMS</Button>
               </Box>
             </Box>
 
@@ -3301,17 +3374,39 @@ function Center() {
 
               if (!flat || flat.length === 0) {
                 return (
-                  <TableContainer ref={tableContainerRef} sx={{ flex: 1, overflow: 'auto', minHeight: 190 }}>
-                    <Table stickyHeader size="small">
+                  <TableContainer
+                    ref={tableContainerRef}
+                    sx={{
+                      flex: 1,
+                      height: 320,
+                      minHeight: 260,
+                      maxHeight: '56vh',
+                      overflowY: 'auto',
+                      overflowX: 'auto',
+                      scrollBehavior: 'smooth',
+                      border: '1px solid rgba(255,255,255,0.14)',
+                      borderRadius: 1.5,
+                      bgcolor: '#0E1117',
+                      pb: 1,
+                    }}
+                  >
+                    <Table stickyHeader size="small" sx={{ tableLayout: 'fixed', minWidth: 620 }}>
+                      <colgroup>
+                        <col style={{ width: '56px' }} />
+                        <col style={{ width: '46%' }} />
+                        <col style={{ width: '16%' }} />
+                        <col style={{ width: '16%' }} />
+                        <col style={{ width: '18%' }} />
+                      </colgroup>
                       <TableHead>
                         <TableRow>
-                          <TableCell padding="checkbox">
+                          <TableCell padding="checkbox" sx={{ bgcolor: '#161B22', color: '#F3F4F6', fontSize: '0.92rem', fontWeight: 600, position: 'sticky', top: 0, zIndex: 2 }}>
                             <Checkbox disabled />
                           </TableCell>
-                          <TableCell>Number</TableCell>
-                          <TableCell>1st</TableCell>
-                          <TableCell>2nd</TableCell>
-                          <TableCell>Action</TableCell>
+                          <TableCell sx={{ bgcolor: '#161B22', color: '#F3F4F6', fontSize: '0.92rem', fontWeight: 600, position: 'sticky', top: 0, zIndex: 2 }}>Number</TableCell>
+                          <TableCell align="right" sx={{ bgcolor: '#161B22', color: '#F3F4F6', fontSize: '0.92rem', fontWeight: 600, position: 'sticky', top: 0, zIndex: 2 }}>1st</TableCell>
+                          <TableCell align="right" sx={{ bgcolor: '#161B22', color: '#F3F4F6', fontSize: '0.92rem', fontWeight: 600, position: 'sticky', top: 0, zIndex: 2 }}>2nd</TableCell>
+                          <TableCell align="center" sx={{ bgcolor: '#161B22', color: '#F3F4F6', fontSize: '0.92rem', fontWeight: 600, position: 'sticky', top: 0, zIndex: 2 }}>Action</TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
@@ -3326,20 +3421,34 @@ function Center() {
                 );
               }
 
-              const computedHeight = Math.min(Math.max(flat.length * 48, 120), listHeight);
+              const computedHeight = Math.min(Math.max((flat.length * 52) + 56, 260), listHeight);
               return (
-                <TableContainer ref={tableContainerRef} sx={{ flex: 1, maxHeight: Math.max(220, computedHeight), overflowY: 'auto', minHeight: 190 }}>
-                  <Table stickyHeader size="small" sx={{ tableLayout: 'fixed' }}>
+                <TableContainer
+                  ref={tableContainerRef}
+                  sx={{
+                    flex: 1,
+                    height: Math.max(260, computedHeight),
+                    maxHeight: '56vh',
+                    overflowY: 'auto',
+                    overflowX: 'auto',
+                    scrollBehavior: 'smooth',
+                    border: '1px solid rgba(255,255,255,0.14)',
+                    borderRadius: 1.5,
+                    bgcolor: '#0E1117',
+                    pb: 1,
+                  }}
+                >
+                  <Table stickyHeader size="small" sx={{ tableLayout: 'fixed', minWidth: 620, '& .MuiTableRow-root': { height: 52 } }}>
                     <colgroup>
                       <col style={{ width: '56px' }} />
-                      <col style={{ width: '360px' }} />
-                      <col style={{ width: '120px' }} />
-                      <col style={{ width: '120px' }} />
-                      <col style={{ width: '160px' }} />
+                      <col style={{ width: '46%' }} />
+                      <col style={{ width: '16%' }} />
+                      <col style={{ width: '16%' }} />
+                      <col style={{ width: '18%' }} />
                     </colgroup>
                     <TableHead>
-                      <TableRow sx={{ backgroundColor: 'rgba(255,255,255,0.03)' }}>
-                        <TableCell padding="checkbox">
+                      <TableRow>
+                        <TableCell padding="checkbox" sx={{ bgcolor: '#161B22', color: '#F3F4F6', fontSize: '0.92rem', fontWeight: 600, position: 'sticky', top: 0, zIndex: 2 }}>
                           <Checkbox
                             checked={
                               Object.values(groupedEntries)
@@ -3357,15 +3466,16 @@ function Center() {
                                 setSelectedEntries([]);
                               }
                             }}
+                            sx={{ color: 'rgba(255,255,255,0.75)', '&.Mui-checked': { color: '#60A5FA' } }}
                           />
                         </TableCell>
-                        <TableCell>Number</TableCell>
-                        <TableCell align="center">1st</TableCell>
-                        <TableCell align="center">2nd</TableCell>
-                        <TableCell align="center">Action</TableCell>
+                        <TableCell sx={{ bgcolor: '#161B22', color: '#F3F4F6', fontSize: '0.92rem', fontWeight: 600, position: 'sticky', top: 0, zIndex: 2 }}>Number</TableCell>
+                        <TableCell align="right" sx={{ bgcolor: '#161B22', color: '#F3F4F6', fontSize: '0.92rem', fontWeight: 600, position: 'sticky', top: 0, zIndex: 2 }}>1st</TableCell>
+                        <TableCell align="right" sx={{ bgcolor: '#161B22', color: '#F3F4F6', fontSize: '0.92rem', fontWeight: 600, position: 'sticky', top: 0, zIndex: 2 }}>2nd</TableCell>
+                        <TableCell align="center" sx={{ bgcolor: '#161B22', color: '#F3F4F6', fontSize: '0.92rem', fontWeight: 600, position: 'sticky', top: 0, zIndex: 2 }}>Action</TableCell>
                       </TableRow>
                     </TableHead>
-                    <TableBody>
+                    <TableBody sx={{ '& .MuiTableRow-root:nth-of-type(odd)': { bgcolor: 'rgba(255,255,255,0.02)' }, '& .MuiTableRow-root:hover': { bgcolor: 'rgba(96,165,250,0.08)' } }}>
                       {flat.length === 0 ? (
                         <TableRow>
                           <TableCell colSpan={5} sx={{ textAlign: 'center', py: 6, color: 'grey.400' }}>
@@ -3374,13 +3484,13 @@ function Center() {
                         </TableRow>
                       ) : (
                         flat.map((row) => (
-                          <TableRow key={row.objectId || row._tempId || row.id} hover>
+                          <TableRow key={row.objectId || row._tempId || row.id} hover sx={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
                             <TableCell padding="checkbox">
-                              <Checkbox checked={selectedEntries.includes(row.objectId || row.id)} onChange={() => toggleSelectEntry(row.objectId || row.id)} />
+                              <Checkbox checked={selectedEntries.includes(row.objectId || row.id)} onChange={() => toggleSelectEntry(row.objectId || row.id)} sx={{ color: 'rgba(255,255,255,0.75)', '&.Mui-checked': { color: '#60A5FA' } }} />
                             </TableCell>
-                            <TableCell sx={{ color: 'grey.100', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '1.15rem', fontWeight: 600 }}>{row.no}</TableCell>
-                            <TableCell align="center" sx={{ color: 'grey.100', fontSize: '1.15rem', fontWeight: 600 }}>{row.f}</TableCell>
-                            <TableCell align="center" sx={{ color: 'grey.100', fontSize: '1.15rem', fontWeight: 600 }}>{row.s}</TableCell>
+                            <TableCell sx={{ color: '#FFFFFF', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '0.98rem', fontWeight: 500 }}>{row.no}</TableCell>
+                            <TableCell align="right" sx={{ color: '#FFFFFF', fontSize: '0.98rem', fontWeight: 500 }}>{row.f}</TableCell>
+                            <TableCell align="right" sx={{ color: '#FFFFFF', fontSize: '0.98rem', fontWeight: 500 }}>{row.s}</TableCell>
                             <TableCell align="center">
                               {row.isGroupStart && (
                                 <IconButton aria-label="delete" size="small" onClick={() => openDeleteConfirm(row.parentId)} sx={{ bgcolor: 'error.main', color: 'common.white', '&:hover': { bgcolor: 'error.dark' }, minWidth: 40, height: 32, borderRadius: 1 }}>
@@ -3403,9 +3513,9 @@ function Center() {
                 <Typography variant="body2" sx={{ color: 'grey.300' }}>Distributors cannot add entries from this panel.</Typography>
               </Paper>
             ) : (
-              <Box component="form" onSubmit={(e) => { e.preventDefault(); handleSingleEntrySubmit(); }} sx={{ mt: 'auto', pt: 2, overflowX: 'auto', position: 'sticky', bottom: 0, bgcolor: 'grey.800', p: 2, boxShadow: '0 -8px 20px rgba(0,0,0,0.6)', zIndex: 20 }}>
-                <Grid container spacing={2} alignItems="center" wrap="nowrap">
-                  <Grid item>
+              <Box component="form" onSubmit={(e) => { e.preventDefault(); handleSingleEntrySubmit(); }} sx={{ mt: 'auto', pt: 2, overflowX: 'hidden', position: 'sticky', bottom: 0, bgcolor: 'grey.800', p: 2, borderTop: '1px solid rgba(255,255,255,0.12)', boxShadow: '0 -8px 20px rgba(0,0,0,0.6)', zIndex: 20 }}>
+                <Grid container spacing={1.5} alignItems="center" wrap="wrap">
+                  <Grid item sx={{ flex: { xs: '1 1 100%', sm: '0 0 auto' }, width: { xs: '100%', sm: 'auto' } }}>
                     <TextField
                       inputRef={noInputRef}
                       value={no}
@@ -3445,12 +3555,26 @@ function Center() {
                         }
                         setNo(out);
                       }}
-                      sx={{ width: 220, '& .MuiOutlinedInput-root': { color: '#fff', backgroundColor: 'rgba(255,255,255,0.02)', borderRadius: 1, '& fieldset': { borderColor: 'rgba(255,255,255,0.08)' }, '&:hover fieldset': { borderColor: 'rgba(255,255,255,0.14)' }, '&.Mui-focused fieldset': { borderColor: 'rgba(255,255,255,0.22)' } }, '& .MuiInputLabel-root': { color: 'rgba(255,255,255,0.6)' } }}
+                      sx={{
+                        width: { xs: '100%', sm: 220 },
+                        '& .MuiOutlinedInput-root': {
+                          color: '#fff',
+                          backgroundColor: 'rgba(255,255,255,0.02)',
+                          borderRadius: 1,
+                          minHeight: 44,
+                          '& fieldset': { borderColor: 'rgba(255,255,255,0.08)' },
+                          '&:hover fieldset': { borderColor: 'rgba(255,255,255,0.14)' },
+                          '&.Mui-focused fieldset': { borderColor: 'rgba(255,255,255,0.25)' },
+                        },
+                        '& .MuiInputBase-input': { fontSize: '1rem', fontWeight: 600, lineHeight: 1.3 },
+                        '& .MuiInputLabel-root': { color: 'rgba(255,255,255,0.72)', fontSize: '0.95rem', fontWeight: 500 },
+                        '& .MuiInputLabel-shrink': { fontSize: '0.82rem', fontWeight: 600 },
+                      }}
                       InputProps={{ sx: { color: '#fff' } }}
-                      InputLabelProps={{ sx: { color: 'rgba(255,255,255,0.6)' } }}
+                      InputLabelProps={{ sx: { color: 'rgba(255,255,255,0.78)' } }}
                     />
                   </Grid>
-                  <Grid item>
+                  <Grid item sx={{ flex: { xs: '1 1 100%', sm: '0 0 auto' }, width: { xs: '100%', sm: 'auto' } }}>
                     <TextField
                       inputRef={fInputRef}
                       value={f}
@@ -3462,12 +3586,26 @@ function Center() {
                       variant="outlined"
                       size="medium"
                       inputProps={{ inputMode: 'numeric', pattern: '[0-9]*', maxLength: 10 }}
-                      sx={{ width: 180, '& .MuiOutlinedInput-root': { color: '#fff', backgroundColor: 'rgba(255,255,255,0.02)', borderRadius: 2, '& fieldset': { borderColor: 'rgba(255,255,255,0.08)' }, '&:hover fieldset': { borderColor: 'rgba(255,255,255,0.14)' }, '&.Mui-focused fieldset': { borderColor: 'rgba(255,255,255,0.22)' } }, '& .MuiInputLabel-root': { color: 'rgba(255,255,255,0.6)' } }}
+                      sx={{
+                        width: { xs: '100%', sm: 180 },
+                        '& .MuiOutlinedInput-root': {
+                          color: '#fff',
+                          backgroundColor: 'rgba(255,255,255,0.02)',
+                          borderRadius: 2,
+                          minHeight: 44,
+                          '& fieldset': { borderColor: 'rgba(255,255,255,0.08)' },
+                          '&:hover fieldset': { borderColor: 'rgba(255,255,255,0.14)' },
+                          '&.Mui-focused fieldset': { borderColor: 'rgba(255,255,255,0.25)' },
+                        },
+                        '& .MuiInputBase-input': { fontSize: '1rem', fontWeight: 600, lineHeight: 1.3 },
+                        '& .MuiInputLabel-root': { color: 'rgba(255,255,255,0.72)', fontSize: '0.95rem', fontWeight: 500 },
+                        '& .MuiInputLabel-shrink': { fontSize: '0.82rem', fontWeight: 600 },
+                      }}
                       InputProps={{ sx: { color: '#fff' } }}
-                      InputLabelProps={{ sx: { color: 'rgba(255,255,255,0.6)' } }}
+                      InputLabelProps={{ sx: { color: 'rgba(255,255,255,0.78)' } }}
                     />
                   </Grid>
-                  <Grid item>
+                  <Grid item sx={{ flex: { xs: '1 1 100%', sm: '0 0 auto' }, width: { xs: '100%', sm: 'auto' } }}>
                     <TextField
                       inputRef={sInputRef}
                       value={s}
@@ -3479,14 +3617,28 @@ function Center() {
                       variant="outlined"
                       size="medium"
                       inputProps={{ inputMode: 'numeric', pattern: '[0-9]*', maxLength: 10 }}
-                      sx={{ width: 180, '& .MuiOutlinedInput-root': { color: '#fff', backgroundColor: 'rgba(255,255,255,0.02)', borderRadius: 1, '& fieldset': { borderColor: 'rgba(255,255,255,0.08)' }, '&:hover fieldset': { borderColor: 'rgba(255,255,255,0.14)' }, '&.Mui-focused fieldset': { borderColor: 'rgba(255,255,255,0.22)' } }, '& .MuiInputLabel-root': { color: 'rgba(255,255,255,0.6)' } }}
+                      sx={{
+                        width: { xs: '100%', sm: 180 },
+                        '& .MuiOutlinedInput-root': {
+                          color: '#fff',
+                          backgroundColor: 'rgba(255,255,255,0.02)',
+                          borderRadius: 1,
+                          minHeight: 44,
+                          '& fieldset': { borderColor: 'rgba(255,255,255,0.08)' },
+                          '&:hover fieldset': { borderColor: 'rgba(255,255,255,0.14)' },
+                          '&.Mui-focused fieldset': { borderColor: 'rgba(255,255,255,0.25)' },
+                        },
+                        '& .MuiInputBase-input': { fontSize: '1rem', fontWeight: 600, lineHeight: 1.3 },
+                        '& .MuiInputLabel-root': { color: 'rgba(255,255,255,0.72)', fontSize: '0.95rem', fontWeight: 500 },
+                        '& .MuiInputLabel-shrink': { fontSize: '0.82rem', fontWeight: 600 },
+                      }}
                       InputProps={{ sx: { color: '#fff' } }}
-                      InputLabelProps={{ sx: { color: 'rgba(255,255,255,0.6)' } }}
+                      InputLabelProps={{ sx: { color: 'rgba(255,255,255,0.78)' } }}
                     />
                   </Grid>
-                  <Grid item sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <FormControlLabel control={<Switch checked={autoMode} onChange={toggleAutoMode} color="primary" />} label="Auto Mode" sx={{ mr: 0 }} />
-                    <Button type="submit" variant="contained" color="success" disabled={isPastClosingTime()}>
+                  <Grid item sx={{ display: 'flex', alignItems: 'center', justifyContent: { xs: 'space-between', sm: 'flex-start' }, gap: 1, width: { xs: '100%', sm: 'auto' } }}>
+                    <FormControlLabel control={<Switch checked={autoMode} onChange={toggleAutoMode} color="primary" />} label="Auto Mode" sx={{ mr: 0, '& .MuiFormControlLabel-label': { fontSize: 14, fontWeight: 600, color: '#F3F4F6' } }} />
+                    <Button type="submit" variant="contained" color="success" disabled={isPastClosingTime()} sx={{ fontSize: 14, fontWeight: 700, px: 2.2, py: 0.8 }}>
                       Save
                     </Button>
                   </Grid>
@@ -3497,7 +3649,7 @@ function Center() {
           </Paper>
         </Box>
 
-        <Box sx={{ width: 260 }}>
+        <Box sx={{ width: { xs: '100%', lg: 260 }, flexShrink: 0 }}>
           <div className="bg-gray-800 border border-gray-700 px-2 py-2 rounded-lg shadow-md text-white">
             <div className="flex flex-col gap-2">
               <button className="w-full flex items-center space-x-2 px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-500" onClick={handlePaltiAKR}><FaStar /> <FaStar /> <span>Palti AKR</span></button>
@@ -3552,7 +3704,12 @@ function Center() {
             ></textarea>
 
             <button
-              onClick={() => setParsedEntries(parseSMS(smsInput))}
+              onClick={() => {
+                const next = parseSMS(smsInput);
+                setParsedEntries(next);
+                if (!next.length) toast.error("Unable to parse SMS. Please check format.");
+                else toast.success(`${next.length} entries parsed`);
+              }}
               className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600 mb-3"
             >
               Preview

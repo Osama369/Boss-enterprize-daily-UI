@@ -18,13 +18,7 @@ const DistributerUsers = ({ onEditUser }) => {
     try {
       // dispatch(showLoading());
       setError(null);
-      
-      const token = localStorage.getItem("token");
-      const response = await axios.get("/api/v1/users/distributor-users", {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      const response = await axios.get("/api/v1/users/distributor-users");
       
       if (isMounted.current) {
         if (Array.isArray(response.data)) {
@@ -60,17 +54,10 @@ const DistributerUsers = ({ onEditUser }) => {
       }
       
       const newStatus = !user.isActive;
-      const token = localStorage.getItem("token");
-      
       // Use distributor update endpoint so distributors can toggle their clients
       await axios.patch(
         `/api/v1/users/distributor-update/${id}`,
-        { isActive: newStatus },
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
+        { isActive: newStatus }
       );
       
       // Update local state
@@ -98,13 +85,8 @@ const DistributerUsers = ({ onEditUser }) => {
     try {
       // dispatch(showLoading());
       
-      const token = localStorage.getItem("token");
       // Use distributor-specific delete route (admin delete is protected)
-      await axios.delete(`/api/v1/users/distributor-delete/${id}`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      await axios.delete(`/api/v1/users/distributor-delete/${id}`);
       
       // Remove user from local state
       setUsers(prevUsers => prevUsers.filter(user => user._id !== id));
@@ -150,11 +132,9 @@ const DistributerUsers = ({ onEditUser }) => {
     }
     setTransferLoading(true);
     try {
-      const token = localStorage.getItem('token');
       const idempotencyKey = generateIdempotencyKey();
       const res = await axios.post(`/api/v1/users/${transferUser._id}/balance/transfer`, { amount: amt }, {
         headers: {
-          Authorization: `Bearer ${token}`,
           'Idempotency-Key': idempotencyKey,
         }
       });

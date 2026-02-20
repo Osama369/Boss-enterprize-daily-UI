@@ -1,5 +1,7 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { useEffect } from 'react';
+import axios from 'axios';
 import Homepage from './pages/Homepage';
 import Login from './pages/Login';
 import Register from './pages/Register';
@@ -10,7 +12,7 @@ import ManageUsers from './pages/admin/ManageUsers';
 import CreateUser from './pages/admin/CreateUser';
 import EditUser from './pages/admin/EditUser';
 
-import { useSelector } from 'react-redux';
+import { useDispatch, useSelector } from 'react-redux';
 import Spinner from './components/Spinner';
 import ProtectedRoute from './components/ProtectedRoute';
 import PublicRoute from './components/PublicRoute';
@@ -21,10 +23,25 @@ import { Toaster } from 'react-hot-toast';
 import RoleProtectedRoute from './components/RoleProtectedRoute';
 import WinningNumbers from './pages/admin/WinningNumbers';
 import DrawList from './pages/admin/DrawList';
+import { clearUser, setUser } from './redux/features/userSlice';
 
 // this is the routing setup 
 function App() {
+  const dispatch = useDispatch();
   const { loading } = useSelector(state => state.alertSlice)
+
+  useEffect(() => {
+    const bootstrapAuth = async () => {
+      try {
+        const response = await axios.get('/api/v1/auth/me');
+        dispatch(setUser(response.data?.user || null));
+      } catch (err) {
+        dispatch(clearUser());
+      }
+    };
+    bootstrapAuth();
+  }, [dispatch]);
+
   return (
 
     <BrowserRouter>
@@ -81,8 +98,23 @@ function App() {
         {/* Mirror distributor-prefixed URLs so old links continue to work */}
         <Route path="/distributor" element={
           <RoleProtectedRoute allowedRoles={['distributor']}>
-            <Homepage />
+            <Navigate to="/distributor/book" replace />
           </RoleProtectedRoute>
+        } />
+        <Route path="/distributor/book" element={
+            <RoleProtectedRoute allowedRoles={['distributor']}>
+              <Homepage />
+            </RoleProtectedRoute>
+        } />
+        <Route path="/distributor/voucher" element={
+            <RoleProtectedRoute allowedRoles={['distributor']}>
+              <Homepage />
+            </RoleProtectedRoute>
+        } />
+        <Route path="/distributor/sale-report" element={
+            <RoleProtectedRoute allowedRoles={['distributor']}>
+              <Homepage />
+            </RoleProtectedRoute>
         } />
         <Route path="/distributor/manage-users" element={
             <RoleProtectedRoute allowedRoles={['distributor']}>

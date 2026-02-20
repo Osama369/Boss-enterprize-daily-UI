@@ -1,11 +1,12 @@
 import React from 'react';
 import { Navigate } from 'react-router-dom';
+import { useSelector } from 'react-redux';
 
 const AdminPublicRoute = ({ children }) => {
-    if (localStorage.getItem("adminToken")) {
-        return <Navigate to="/admin" />;  // Redirect logged-in admin to dashboard
-    }
-    return children;  // Allow access to the public route if not logged in
+    const { user, authChecked } = useSelector((state) => state.user);
+    if (!authChecked) return null;
+    if (user?.role === 'admin') return <Navigate to="/admin" />;
+    return children;
 };
 
 export default AdminPublicRoute;

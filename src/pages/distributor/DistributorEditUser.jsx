@@ -21,19 +21,8 @@ const DistributorEditUser = ({userId, theme}) => {
         setError('');
         // dispatch(showLoading());
 
-        const token = localStorage.getItem('token');
-        if (!token) {
-          toast.error('You must be logged in to edit users');
-          navigate('/login');
-          return;
-        }
-
         // Fetch the user data
-        const response = await axios.get(`/api/v1/users/${userId}`, {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        });
+        const response = await axios.get(`/api/v1/users/${userId}`);
 
         // dispatch(hideLoading());
         setUserData(response.data);
@@ -56,19 +45,8 @@ const DistributorEditUser = ({userId, theme}) => {
       setError('');
     //   dispatch(showLoading());
 
-      const token = localStorage.getItem('token');
-      if (!token) {
-        toast.error('You must be logged in to update users');
-        navigate('/login');
-        return;
-      }
-
       // Update the user using the distributor-specific endpoint
-      const response = await axios.patch(`/api/v1/users/distributor-update/${userId}`, updatedUserData, {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      });
+      const response = await axios.patch(`/api/v1/users/distributor-update/${userId}`, updatedUserData);
 
     //   dispatch(hideLoading());
       

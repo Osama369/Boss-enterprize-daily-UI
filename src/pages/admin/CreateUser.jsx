@@ -19,17 +19,8 @@ const CreateUser = () => {
     try {
       setError("");
       dispatch(showLoading());
-      
-      const token = localStorage.getItem("adminToken");
-      await axios.post(
-        "/api/v1/users/create-user",
-        userData,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
+
+      await axios.post("/api/v1/users/create-user", userData);
 
       dispatch(hideLoading());
       toast.success("User created successfully!");

@@ -22,29 +22,36 @@ const drawerWidth = 240;
 
 // Sidebar shows different menu items depending on the user's role.
 // onSelect(tab) will be called for layout-local tabs (Sell Department, reports, total-sale-report, etc.).
-const Sidebar = ({ onSelect }) => {
-  const reduxUser = useSelector((s) => s.user?.user);
-  let storedUser = null;
-  try {
-    storedUser = JSON.parse(localStorage.getItem('user') || 'null');
-  } catch (e) {
-    storedUser = null;
-  }
-  const adminTokenPresent = !!localStorage.getItem('adminToken');
-  const user = reduxUser || storedUser || null;
-  const role = adminTokenPresent ? 'admin' : (user?.role || 'user');
+const Sidebar = ({ onSelect, variant = 'permanent', open = true, onClose = null }) => {
+  const user = useSelector((s) => s.user?.user);
+  const role = user?.role || 'user';
 
   const handleSelect = (tab) => {
     if (typeof onSelect === 'function') onSelect(tab);
+    if (variant !== 'permanent' && typeof onClose === 'function') onClose();
+  };
+
+  const closeIfOverlay = () => {
+    if (variant !== 'permanent' && typeof onClose === 'function') onClose();
   };
 
   return (
     <Drawer
-      variant="permanent"
+      variant={variant}
+      open={variant === 'permanent' ? true : open}
+      onClose={onClose || undefined}
       sx={{
         width: drawerWidth,
         flexShrink: 0,
-        [`& .MuiDrawer-paper`]: { width: drawerWidth, boxSizing: 'border-box', bgcolor: 'grey.800', color: 'common.white', p: 1, borderRadius: 1.5, border: '1px solid rgba(255,255,255,0.06)' },
+        [`& .MuiDrawer-paper`]: {
+          width: drawerWidth,
+          boxSizing: 'border-box',
+          bgcolor: 'grey.800',
+          color: 'common.white',
+          p: 1,
+          borderRadius: variant === 'permanent' ? 1.5 : 0,
+          border: '1px solid rgba(255,255,255,0.06)',
+        },
       }}
     >
       <Toolbar>
@@ -55,27 +62,54 @@ const Sidebar = ({ onSelect }) => {
           {/* Sell Department - hide for admin (admin has its own panel) */}
           {role !== 'admin' && (
             <>
-              <ListItem disablePadding>
-                <ListItemButton onClick={() => handleSelect('Sell Department')}>
-                  <ListItemIcon><MonetizationOnIcon /></ListItemIcon>
-                  <ListItemText primary="Sell Department" />
-                </ListItemButton>
-              </ListItem>
+              {role === 'distributor' ? (
+                <>
+                  <ListItem disablePadding>
+                    <ListItemButton component={Link} to="/distributor/book" onClick={closeIfOverlay}>
+                      <ListItemIcon><MonetizationOnIcon /></ListItemIcon>
+                      <ListItemText primary="Sell Department" />
+                    </ListItemButton>
+                  </ListItem>
 
-              {/* Common reports for users+distributors */}
-              <ListItem disablePadding>
-                <ListItemButton onClick={() => handleSelect('reports')}>
-                  <ListItemIcon><DashboardIcon /></ListItemIcon>
-                  <ListItemText primary="Sale Vouchers" />
-                </ListItemButton>
-              </ListItem>
+                  <ListItem disablePadding>
+                    <ListItemButton component={Link} to="/distributor/voucher" onClick={closeIfOverlay}>
+                      <ListItemIcon><DashboardIcon /></ListItemIcon>
+                      <ListItemText primary="Sale Vouchers" />
+                    </ListItemButton>
+                  </ListItem>
 
-              <ListItem disablePadding>
-                <ListItemButton onClick={() => handleSelect('total-sale-report')}>
-                  <ListItemIcon><ReportIcon /></ListItemIcon>
-                  <ListItemText primary="Total Sale Report" />
-                </ListItemButton>
-              </ListItem>
+                  <ListItem disablePadding>
+                    <ListItemButton component={Link} to="/distributor/sale-report" onClick={closeIfOverlay}>
+                      <ListItemIcon><ReportIcon /></ListItemIcon>
+                      <ListItemText primary="Total Sale Report" />
+                    </ListItemButton>
+                  </ListItem>
+                </>
+              ) : (
+                <>
+                  <ListItem disablePadding>
+                    <ListItemButton onClick={() => handleSelect('Sell Department')}>
+                      <ListItemIcon><MonetizationOnIcon /></ListItemIcon>
+                      <ListItemText primary="Sell Department" />
+                    </ListItemButton>
+                  </ListItem>
+
+                  {/* Common reports for users+distributors */}
+                  <ListItem disablePadding>
+                    <ListItemButton onClick={() => handleSelect('reports')}>
+                      <ListItemIcon><DashboardIcon /></ListItemIcon>
+                      <ListItemText primary="Sale Vouchers" />
+                    </ListItemButton>
+                  </ListItem>
+
+                  <ListItem disablePadding>
+                    <ListItemButton onClick={() => handleSelect('total-sale-report')}>
+                      <ListItemIcon><ReportIcon /></ListItemIcon>
+                      <ListItemText primary="Total Sale Report" />
+                    </ListItemButton>
+                  </ListItem>
+                </>
+              )}
             </>
           )}
 
@@ -85,37 +119,31 @@ const Sidebar = ({ onSelect }) => {
               {role === 'admin' ? (
                 <>
                   <ListItem disablePadding>
-                    <ListItemButton component={Link} to="/admin/manage-users">
+                  <ListItemButton component={Link} to="/admin/manage-users" onClick={closeIfOverlay}>
                       <ListItemIcon><GroupIcon /></ListItemIcon>
                       <ListItemText primary="Manage Users" />
                     </ListItemButton>
                   </ListItem>
 
                   <ListItem disablePadding>
-                    <ListItemButton component={Link} to="/admin/create-user">
+                  <ListItemButton component={Link} to="/admin/create-user" onClick={closeIfOverlay}>
                       <ListItemIcon><PersonAddIcon /></ListItemIcon>
                       <ListItemText primary="Create User" />
                     </ListItemButton>
                   </ListItem>
 
-                  <ListItem disablePadding>
-                    <ListItemButton component={Link} to="/admin/manage-users">
-                      <ListItemIcon><PersonAddIcon /></ListItemIcon>
-                      <ListItemText primary="Edit User" />
-                    </ListItemButton>
-                  </ListItem>
                 </>
               ) : (
                 <>
                   <ListItem disablePadding>
-                    <ListItemButton component={Link} to="/distributor/manage-users">
+                    <ListItemButton component={Link} to="/distributor/manage-users" onClick={closeIfOverlay}>
                       <ListItemIcon><GroupIcon /></ListItemIcon>
                       <ListItemText primary="Manage Users" />
                     </ListItemButton>
                   </ListItem>
 
                   <ListItem disablePadding>
-                    <ListItemButton component={Link} to="/distributor/create-user">
+                    <ListItemButton component={Link} to="/distributor/create-user" onClick={closeIfOverlay}>
                       <ListItemIcon><PersonAddIcon /></ListItemIcon>
                       <ListItemText primary="Create User" />
                     </ListItemButton>
@@ -131,14 +159,14 @@ const Sidebar = ({ onSelect }) => {
           {role === 'admin' && (
             <>
               <ListItem disablePadding>
-                <ListItemButton component={Link} to="/admin/winning-numbers">
+                <ListItemButton component={Link} to="/admin/winning-numbers" onClick={closeIfOverlay}>
                   <ListItemIcon><EmojiEventsIcon /></ListItemIcon>
                   <ListItemText primary="Winning Numbers" />
                 </ListItemButton>
               </ListItem>
 
               <ListItem disablePadding>
-                <ListItemButton component={Link} to="/admin/timeslots">
+                <ListItemButton component={Link} to="/admin/timeslots" onClick={closeIfOverlay}>
                   <ListItemIcon><ScheduleIcon /></ListItemIcon>
                   <ListItemText primary="TimeSlots" />
                 </ListItemButton>

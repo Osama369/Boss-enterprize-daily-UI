@@ -17,14 +17,6 @@ const DistributorCreateUser = ({theme}) => {
       setError('');
     //   dispatch(showLoading());
 
-      // Get the token for authentication
-      const token = localStorage.getItem('token');
-      if (!token) {
-        toast.error('You must be logged in to create users');
-        navigate('/login');
-        return;
-      }
-
       // If distributor supplied an initial balance, we must create the user
       // with zero balance and then perform an atomic transfer so the
       // distributor's balance is deducted. This prevents creating funds
@@ -38,10 +30,7 @@ const DistributorCreateUser = ({theme}) => {
 
       // Create the user using the distributor-specific endpoint
       const response = await axios.post('/api/v1/users/distributor-create-user', createPayload, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Idempotency-Key': idempotencyKey,
-        }
+        headers: { 'Idempotency-Key': idempotencyKey }
       });
       const createdUser = response.data?.user;
 
@@ -49,7 +38,7 @@ const DistributorCreateUser = ({theme}) => {
       if (initialBalance > 0 && createdUser && createdUser._id) {
         try {
           await axios.post(`/api/v1/users/${createdUser._id}/balance/transfer`, { amount: initialBalance }, {
-            headers: { Authorization: `Bearer ${token}`, 'Idempotency-Key': idempotencyKey }
+            headers: { 'Idempotency-Key': idempotencyKey }
           }); 
           toast.success('User created and funded successfully');
         } catch (err) {

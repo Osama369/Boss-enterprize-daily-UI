@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { useSelector } from 'react-redux';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import {
@@ -30,9 +29,6 @@ import DialogContent from '@mui/material/DialogContent';
 import DialogActions from '@mui/material/DialogActions';
 
 const WinningNumbers = () => {
-  const userData = useSelector((state) => state.user);
-  const token = userData?.token || localStorage.getItem("adminToken");
-
   const [drawDate, setDrawDate] = useState(new Date().toISOString().split('T')[0]);
   const [draws, setDraws] = useState([]);
   const [selectedDraw, setSelectedDraw] = useState(null);
@@ -46,15 +42,12 @@ const WinningNumbers = () => {
   const [deleteIndex, setDeleteIndex] = useState(null);
   const [editDraft, setEditDraft] = useState({ number: '', type: 'second' });
 
-  // Fetch available draws for selection (admin token or user token)
+  // Fetch available draws for selection
   useEffect(() => {
     const fetchTimeSlots = async () => {
       try {
-        const storedAdminToken = localStorage.getItem('adminToken');
-        const authToken = token || storedAdminToken || localStorage.getItem('token');
-        const headers = authToken ? { Authorization: `Bearer ${authToken}` } : {};
         // fetch all timeslots so we can show active and closed
-        const res = await axios.get('/api/v1/timeslots', { headers });
+        const res = await axios.get('/api/v1/timeslots');
         setDraws(res.data.timeSlots || res.data || []);
       } catch (err) {
         console.error('Failed to fetch timeslots', err);
@@ -62,7 +55,7 @@ const WinningNumbers = () => {
       }
     };
     fetchTimeSlots();
-  }, [token]);
+  }, []);
 
     const formatHourLabel = (h) => {
       if (h === null || typeof h === 'undefined') return '';
@@ -129,10 +122,7 @@ const WinningNumbers = () => {
           date: drawDate,
           timeSlotId: selectedDraw?._id,
           timeSlot: selectedDraw?.label || (typeof selectedDraw?.hour !== 'undefined' ? formatHourLabel(selectedDraw.hour) : undefined)
-        },
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        }
       });
   
       console.log("Fetched Winning Numbers:", response.data.winningNumbers);
@@ -190,14 +180,13 @@ const WinningNumbers = () => {
       }
       try {
         setLoading(true);
-        const tokenLocal = localStorage.getItem('adminToken') || localStorage.getItem('token');
         const remaining = (existingWinningNumbers || []).filter((_, i) => i !== deleteIndex);
         const response = await axios.put('/api/v1/data/update-winning-numbers', {
           date: drawDate,
           numbers: remaining,
           timeSlotId: selectedDraw?._id,
           timeSlot: selectedDraw?.label || selectedDraw?.hour
-        }, { headers: { Authorization: `Bearer ${tokenLocal}` } });
+        });
         if (response.data && response.data.success) {
           toast.success('Row deleted');
           const formatted = formatNumbers(remaining);
@@ -243,7 +232,6 @@ const WinningNumbers = () => {
       }
       try {
         setLoading(true);
-        const tokenLocal = localStorage.getItem('adminToken') || localStorage.getItem('token');
         const updated = (existingWinningNumbers || []).slice();
         // if editing an index beyond existing, ensure array length
         if (editingIndex >= updated.length) {
@@ -256,7 +244,7 @@ const WinningNumbers = () => {
           numbers: updated,
           timeSlotId: selectedDraw?._id,
           timeSlot: selectedDraw?.label || selectedDraw?.hour
-        }, { headers: { Authorization: `Bearer ${tokenLocal}` } });
+        });
         if (response.data && response.data.success) {
           toast.success('Row updated');
             const formatted = formatNumbers(updated);
@@ -338,13 +326,12 @@ const WinningNumbers = () => {
         }
         const merged = [...existingWinningNumbers, ...toAdd];
         setLoading(true);
-        const tokenLocal = localStorage.getItem('adminToken') || localStorage.getItem('token');
         const resp = await axios.put('/api/v1/data/update-winning-numbers', {
           date: drawDate,
           numbers: merged,
           timeSlotId: selectedDraw?._id,
           timeSlot: selectedDraw?.label || selectedDraw?.hour
-        }, { headers: { Authorization: `Bearer ${tokenLocal}` } });
+        });
         if (resp.data && resp.data.success) {
           const formatted = formatNumbers(merged);
           setExistingWinningNumbers(formatted);
@@ -359,10 +346,6 @@ const WinningNumbers = () => {
           winningNumbers: validNumbers,
           timeSlotId: selectedDraw?._id,
           timeSlot: selectedDraw?.label || selectedDraw?.hour
-        }, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
         });
 
         console.log('set-winning-numbers response:', response.data);
@@ -409,10 +392,6 @@ const WinningNumbers = () => {
         numbers: validNumbers,
         timeSlotId: selectedDraw?._id,
         timeSlot: selectedDraw?.label || selectedDraw?.hour
-      }, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
       });
 
       if (response.data.success) {
@@ -449,10 +428,7 @@ const WinningNumbers = () => {
           date: drawDate,
           timeSlotId: selectedDraw?._id,
           timeSlot: selectedDraw?.label || (typeof selectedDraw?.hour !== 'undefined' ? formatHourLabel(selectedDraw.hour) : undefined)
-        },
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        }
       });
 
       if (response.data.success) {

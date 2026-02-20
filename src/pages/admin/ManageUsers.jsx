@@ -32,11 +32,7 @@ const ManageUsers = () => {
     try {
       setError(null);
       setIsLoading(true);
-      const token = localStorage.getItem("adminToken");
-
-      const res = await axios.get("/api/v1/users/", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await axios.get("/api/v1/users/");
 
       setUsers(res.data || []);
     } catch (err) {
@@ -59,11 +55,9 @@ const ManageUsers = () => {
         return;
       }
       const newStatus = !user.isActive;
-      const token = localStorage.getItem("adminToken");
       await axios.patch(
         `/api/v1/users/${id}/active`,
-        { isActive: newStatus },
-        { headers: { Authorization: `Bearer ${token}` } }
+        { isActive: newStatus }
       );
 
       setUsers(prevUsers => prevUsers.map(u => u._id === id ? { ...u, isActive: newStatus } : u));
@@ -81,8 +75,7 @@ const ManageUsers = () => {
     if (!window.confirm("Are you sure you want to delete this user?")) return;
     try {
       dispatch(showLoading());
-      const token = localStorage.getItem("adminToken");
-      await axios.delete(`/api/v1/users/${id}`, { headers: { Authorization: `Bearer ${token}` } });
+      await axios.delete(`/api/v1/users/${id}`);
       setUsers(prevUsers => prevUsers.filter(user => user._id !== id));
       toast.success("User deleted successfully");
     } catch (err) {
@@ -119,7 +112,6 @@ const ManageUsers = () => {
 
     setTransferLoading(true);
     try {
-      const token = localStorage.getItem('adminToken');
       const idempotencyKey = generateIdempotencyKey();
 
       const res = await axios.post(
@@ -127,7 +119,6 @@ const ManageUsers = () => {
         { amount: amt },
         {
           headers: {
-            Authorization: `Bearer ${token}`,
             'Idempotency-Key': idempotencyKey,
           },
         }

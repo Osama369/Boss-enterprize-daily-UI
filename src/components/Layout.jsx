@@ -1,38 +1,18 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-// import axios from "axios";
-// import jsPDF from "jspdf";
-// import { useSelector, useDispatch } from "react-redux";
-// import { showLoading, hideLoading } from '../redux/features/alertSlice';
-// import { setUser } from '../redux/features/userSlice';
-// imort the FaSignOutAlt
-import { FaFile, FaSignOutAlt } from 'react-icons/fa';
-// import { setData } from '../redux/features/dataSlice';
-import toast from 'react-hot-toast';
 import Center from './Center';
 
 import DistributerUsers from '../pages/distributor/DistributerUsers';
 import DistributorCreateUser from '../pages/distributor/DistributorCreateUser';
 import DistributorEditUser from '../pages/distributor/DistributorEditUser'; // Import the edit user component
-import Spinner from '../components/Spinner'
 import "jspdf-autotable";
-import {
-  FaBook,
-  FaCalculator,
-  FaInbox,
-  FaDice,
-  FaUsers,
-  FaUserPlus,
-  FaFileAlt,
-  FaUserEdit, // Import icon for editing users
-} from 'react-icons/fa';
-import RoleBasedComponent from './RoleBasedRoute';
-import { Link } from 'react-router-dom';
 import Reports from './Reports';
 import CompactHeader from './CompactHeader';
 import TotalSaleReport from './TotalSaleReport';
 import Box from '@mui/material/Box';
 import Toolbar from '@mui/material/Toolbar';
+import { useTheme } from '@mui/material/styles';
+import useMediaQuery from '@mui/material/useMediaQuery';
 import Sidebar from './Sidebar';
 const Layout = () => {
   // Hooks to manage states of the variables
@@ -45,9 +25,6 @@ const Layout = () => {
   // const [error, setError] = useState("");
   const navigate = useNavigate();
   const location = useLocation();
-  // const userData = useSelector((state) => state.user);
-  // const token = userData?.token || localStorage.getItem("token");
-  // console.log(token);
 
 
   // const [ledger, setLedger] = useState("LEDGER");
@@ -63,30 +40,24 @@ const Layout = () => {
   // const [file, setFile] = useState(null);
   
    
-//    // logout th user 
-//    // utils/auth.js (or inside any component)
-
-const handleLogout = (navigate) => {
-  localStorage.removeItem("token");
-  localStorage.removeItem("user"); // if you're storing user info
-  // Optionally show a toast
-  toast.success("Logged out successfully!");
-  // Navigate to login
-  navigate("/login");
-};
-
-
- 
   const [activeTab, setActiveTab] = useState("Sell Department");
   const [selectedUserId, setSelectedUserId] = useState(null); // Add state for selected user ID
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const drawerWidth = 240;
+  const theme = useTheme();
+  const isDesktop = useMediaQuery(theme.breakpoints.up('lg'));
 
   // Keep layout in sync with URL so routes like /manage-users render inside the dashboard
   useEffect(() => {
     const path = location.pathname || '';
     // support both top-level and /distributor-prefixed routes
-    if (path === '/manage-users' || path === '/distributor/manage-users') {
+    if (path === '/' || path === '/book' || path === '/distributor' || path === '/distributor/book') {
+      setActiveTab('Sell Department');
+    } else if (path === '/voucher' || path === '/distributor/voucher') {
+      setActiveTab('reports');
+    } else if (path === '/sale-report' || path === '/distributor/sale-report') {
+      setActiveTab('total-sale-report');
+    } else if (path === '/manage-users' || path === '/distributor/manage-users') {
       setActiveTab('manage-users');
     } else if (path === '/create-user' || path === '/distributor/create-user') {
       setActiveTab('create-user');
@@ -111,10 +82,24 @@ const handleLogout = (navigate) => {
     <Box sx={{ display: 'flex', minHeight: '100vh', bgcolor: 'grey.900', color: 'grey.100' }}>
 
       {/* Sidebar */}
-      {sidebarVisible && <Sidebar onSelect={(tab) => setActiveTab(tab)} />}
+      {isDesktop ? (
+        sidebarVisible && (
+          <Sidebar
+            onSelect={(tab) => setActiveTab(tab)}
+            variant="permanent"
+          />
+        )
+      ) : (
+        <Sidebar
+          onSelect={(tab) => setActiveTab(tab)}
+          variant="temporary"
+          open={sidebarVisible}
+          onClose={() => setSidebarVisible(false)}
+        />
+      )}
 
       {/* Main Content Area */}
-      <Box component="main" sx={{ flexGrow: 1, bgcolor: 'transparent', ml: sidebarVisible ? `${drawerWidth}px` : 0 }}>
+      <Box component="main" sx={{ flexGrow: 1, minWidth: 0, bgcolor: 'transparent' }}>
         <CompactHeader
           drawerWidth={drawerWidth}
           sidebarVisible={sidebarVisible}

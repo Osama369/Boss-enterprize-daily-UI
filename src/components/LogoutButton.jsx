@@ -18,22 +18,9 @@ const LogoutButton = ({ role = "admin", className }) => {
       const endpoint = role === "distributor" 
         ? '/api/v1/auth/distributor-logout'
         : '/api/v1/auth/admin-logout';
-      
-      const tokenKey = role === "distributor" 
-        ? "distributorToken" 
-        : "adminToken";
-      
-      const token = localStorage.getItem(tokenKey);
-      
+
       // Make logout API request
-      await axios.post(endpoint, {}, {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      });
-      
-      // Remove token from local storage
-      localStorage.removeItem(tokenKey);
+      await axios.post(endpoint, {});
       
       dispatch(hideLoading());
       toast.success('Logged out successfully');

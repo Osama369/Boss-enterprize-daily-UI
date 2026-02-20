@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import jsPDF from 'jspdf';
 import { useSelector } from 'react-redux';
@@ -6,6 +6,7 @@ import { useSelector } from 'react-redux';
 import toast from 'react-hot-toast';
 
 const Reports = () => {
+  const ALL_CLOSED_DRAWS = '__ALL_CLOSED_DRAWS__';
   const userData = useSelector((state) => state.user);
   const role = userData?.user?.role;
   const currentUserId = userData?.user?._id;
@@ -21,6 +22,17 @@ const Reports = () => {
   const [winningNumbers, setWinningNumbers] = useState([]);
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [dailyBillAllClosed, setDailyBillAllClosed] = useState(false);
+
+  const toLocalISODate = (value) => {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
 
   const formatTimeSlotLabel = (slot) => {
     if (!slot) return '';
@@ -40,7 +52,6 @@ const Reports = () => {
 
   const getWinningNumbers = async (date) => {
     try {
-      const token = localStorage.getItem('token');
       const params = {};
       const safeISODate = (d) => {
         try {
@@ -59,7 +70,6 @@ const Reports = () => {
 
       const response = await axios.get('/api/v1/data/get-winning-numbers', {
         params,
-        headers: { Authorization: token ? `Bearer ${token}` : undefined },
       });
 
       if (response.data && response.data.winningNumbers) {
@@ -88,28 +98,54 @@ const Reports = () => {
 
   const selectedClientName = (clients.find(c => String(c._id) === String(selectedClient))?.username) || userData?.user?.username || '';
 
+  const fetchTimeSlots = useCallback(async () => {
+    try {
+      const res = await axios.get('/api/v1/timeslots');
+      const slots = res.data?.timeSlots || res.data || [];
+      const list = Array.isArray(slots) ? slots : [];
+      setDraws(list);
+      setSelectedDraw((prev) => {
+        if (!prev || !prev._id) return prev;
+        const refreshed = list.find((s) => String(s._id) === String(prev._id));
+        return refreshed || null;
+      });
+    } catch (err) {
+      setDraws([]);
+    }
+  }, []);
+
   useEffect(() => {
-    const fetchTimeSlots = async () => {
-      try {
-        const token = userData?.token || localStorage.getItem('token');
-        const headers = token ? { Authorization: `Bearer ${token}` } : {};
-        const res = await axios.get('/api/v1/timeslots', { headers });
-        const slots = res.data?.timeSlots || res.data || [];
-        setDraws(Array.isArray(slots) ? slots : []);
-      } catch (err) {
-        setDraws([]);
-      }
-    };
     fetchTimeSlots();
-  }, [userData]);
+  }, [fetchTimeSlots, userData]);
+
+  // Live refresh timeslots when admin updates them.
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const onTimeSlotsUpdated = () => { fetchTimeSlots(); };
+    const onStorage = (e) => {
+      if (e.key === 'timeslots:lastUpdated') fetchTimeSlots();
+    };
+    const onFocus = () => { fetchTimeSlots(); };
+    const intervalId = window.setInterval(() => {
+      // Polling fallback for cross-machine updates.
+      fetchTimeSlots();
+    }, 20000);
+    window.addEventListener('timeslots:updated', onTimeSlotsUpdated);
+    window.addEventListener('storage', onStorage);
+    window.addEventListener('focus', onFocus);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener('timeslots:updated', onTimeSlotsUpdated);
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [fetchTimeSlots]);
 
   useEffect(() => {
     const fetchClients = async () => {
       if (role === 'user') return;
       try {
-        const token = userData?.token || localStorage.getItem('token');
-        const headers = token ? { Authorization: `Bearer ${token}` } : {};
-        const res = await axios.get('/api/v1/users/distributor-users', { headers });
+        const res = await axios.get('/api/v1/users/distributor-users');
         setClients(Array.isArray(res.data) ? res.data : []);
       } catch (err) {
         setClients([]);
@@ -120,7 +156,7 @@ const Reports = () => {
 
   useEffect(() => {
     if (selectedDraw && selectedDraw.draw_date) {
-      const iso = new Date(selectedDraw.draw_date).toISOString().split('T')[0];
+      const iso = toLocalISODate(selectedDraw.draw_date);
       setDrawDate(iso);
     }
   }, [selectedDraw]);
@@ -130,67 +166,20 @@ const Reports = () => {
   }, [drawDate, selectedDraw]);
 
   useEffect(() => {
+    if (ledger !== 'DAILY BILL') return;
+    if (!dailyBillAllClosed && !selectedDraw) return;
     (async () => {
       try {
         const result = await buildDailyBillResult(drawDate, drawTime);
-        if (!result) {
-          toast('No records found for selected date');
-          setDailyBill(null);
-          return;
-        }
-        setDailyBill(result);
+        setDailyBill(result || null);
       } catch (err) {
-        // swallow - buildDailyBillResult handles errors/empty cases
+        setDailyBill(null);
       }
     })();
-  }, []);
+  }, [ledger, drawDate, selectedDraw, selectedClient, dailyBillAllClosed]);
 
   // Helper to build daily bill result without mutating component state
-  const buildDailyBillResult = async (dateParam = drawDate, timeParam = drawTime) => {
-    const fetchedEntries = await fetchVoucherData(dateParam, timeParam);
-    if (!Array.isArray(fetchedEntries) || fetchedEntries.length === 0) return null;
-
-    // Flatten rows depending on draw selection
-    let allRows = [];
-    if (selectedDraw && selectedDraw._id) {
-      allRows = fetchedEntries.flatMap(e => e.data.map(d => ({ ...d })));
-    } else {
-      fetchedEntries.forEach(e => { if (Array.isArray(e.data)) allRows.push(...e.data); });
-    }
-
-    const categorize = (num) => {
-      if (/^\d{1}$/.test(num) || (num.includes('+') && num.length === 2) || (num.split('+').length - 1 === 2 && num.length === 3) || (num.split('+').length - 1 === 3 && num.length === 4)) return 'HINSA';
-      if (/^\d{2}$/.test(num) || (num.includes('+') && num.length <= 3) || (num.split('+').length - 1 === 2 && num.length === 4)) return 'AKRA';
-      if (/^\d{3}$/.test(num) || (num.length === 4 && num.includes('+'))) return 'TANDOLA';
-      if (/^\d{4}$/.test(num)) return 'PANGORA';
-      return 'OTHER';
-    };
-
-    const sections = { HINSA: [], AKRA: [], TANDOLA: [], PANGORA: [] };
-    allRows.forEach(r => {
-      const num = r.uniqueId || r.number || r.no || '';
-      const first = Number(r.firstPrice ?? r.f ?? 0) || 0;
-      const second = Number(r.secondPrice ?? r.s ?? 0) || 0;
-      const cat = categorize(String(num));
-      if (cat in sections) sections[cat].push([String(num), first, second]);
-    });
-
-    const latestWinningNumbers = await getWinningNumbers(dateParam);
-    const secondPrizeDivisor = 3;
-    const computeSectionTotals = (rows, multiplier, wn) => {
-      const totals = rows.reduce((acc, [, f, s]) => { acc.first += f; acc.second += s; return acc; }, { first: 0, second: 0 });
-      let firstWinning = 0, secondWinning = 0;
-      rows.forEach(([num, f, s]) => {
-        for (const winning of (wn || [])) {
-          if (num === winning.number || checkPositionalMatch(num, winning.number)) {
-            if (winning.type === 'first') firstWinning += f * multiplier;
-            else if (winning.type === 'second' || winning.type === 'third') secondWinning += (s * multiplier) / secondPrizeDivisor;
-          }
-        }
-      });
-      return { totals, winning: firstWinning + secondWinning };
-    };
-
+  const buildDailyBillResult = async (dateParam = drawDate) => {
     const selectedClientConfig = clients.find(c => String(c._id) === String(selectedClient));
     const baseConfig = role === 'user' ? userData?.user : (selectedClientConfig || userData?.user || {});
     const hissaShare = (Number(baseConfig.commission ?? 0) || 0) / 100;
@@ -207,31 +196,146 @@ const Reports = () => {
       PANGORA: Number(baseConfig.fourFigure || 0),
     };
 
-    const result = { rows: {}, totals: { first:0, second:0, sale:0, prize:0, commission:0, safi:0, hissa:0, subTotal:0 } };
+    const toISODate = (d) => toLocalISODate(d);
+    const isDrawClosedLocal = (d) => {
+      if (!d) return false;
+      if (typeof d.isActive === 'boolean') return d.isActive === false;
+      if (typeof d.isExpired === 'boolean') return d.isExpired === true;
+      if (d.draw_date) {
+        const dt = new Date(d.draw_date);
+        dt.setHours(23, 59, 59, 999);
+        return Date.now() > dt.getTime();
+      }
+      return false;
+    };
+    const categorize = (num) => {
+      if (/^\d{1}$/.test(num) || (num.includes('+') && num.length === 2) || (num.split('+').length - 1 === 2 && num.length === 3) || (num.split('+').length - 1 === 3 && num.length === 4)) return 'HINSA';
+      if (/^\d{2}$/.test(num) || (num.includes('+') && num.length <= 3) || (num.split('+').length - 1 === 2 && num.length === 4)) return 'AKRA';
+      if (/^\d{3}$/.test(num) || (num.length === 4 && num.includes('+'))) return 'TANDOLA';
+      if (/^\d{4}$/.test(num)) return 'PANGORA';
+      return 'OTHER';
+    };
 
-    Object.entries(sections).forEach(([k, rows]) => {
-      const multiplier = multipliers[k] || 1;
-      const { totals, winning } = computeSectionTotals(rows, multiplier, latestWinningNumbers);
-      const first = totals.first; const second = totals.second; const sale = first + second;
-      const commission = (sale * (rates[k] || 0)) / 100;
+    const fetchWinningNumbersForDraw = async (dateValue, draw) => {
+      try {
+        const params = { date: toISODate(dateValue) || dateValue };
+        if (draw && draw._id) params.timeSlotId = draw._id;
+        const response = await axios.get('/api/v1/data/get-winning-numbers', { params });
+        const list = Array.isArray(response.data?.winningNumbers) ? response.data.winningNumbers : [];
+        return list.map((item) => ({ number: String(item.number || ''), type: item.type }));
+      } catch (e) {
+        return [];
+      }
+    };
+
+    let targetDraws = [];
+    if (dailyBillAllClosed) {
+      const dateISO = toISODate(dateParam) || dateParam;
+      targetDraws = (draws || [])
+        .filter((d) => {
+          if (!isDrawClosedLocal(d)) return false;
+          // Some closed slots may not carry draw_date reliably; include them in all-closed mode.
+          if (!d?.draw_date) return true;
+          return toISODate(d.draw_date) === dateISO;
+        })
+        .sort((a, b) => Number(a.hour ?? 0) - Number(b.hour ?? 0));
+      if (targetDraws.length === 0) return null;
+    } else {
+      if (!selectedDraw || !selectedDraw._id) return null;
+      targetDraws = [selectedDraw];
+    }
+
+    const result = {
+      drawRows: [],
+      totals: { first: 0, second: 0, sale: 0, prize: 0, commission: 0, safi: 0, hissa: 0, subTotal: 0, bill: 0 },
+      meta: {
+        commissionLabel: `${rates.HINSA}%-${rates.AKRA}%-${rates.TANDOLA}%-${rates.PANGORA}%`,
+        hissaPercent: (hissaShare * 100),
+      },
+    };
+
+    const secondPrizeDivisor = 3;
+
+    for (const draw of targetDraws) {
+      const fetchedEntries = await fetchVoucherData(dateParam, null, null, false, draw?._id);
+      let allRows = [];
+      fetchedEntries.forEach(e => { if (Array.isArray(e.data)) allRows.push(...e.data); });
+      if (allRows.length === 0) {
+        result.drawRows.push({
+          drawId: draw._id,
+          drawName: formatTimeSlotLabel(draw),
+          first: 0, second: 0, sale: 0, prize: 0, commission: 0, safi: 0, hissa: 0, subTotal: 0,
+        });
+        continue;
+      }
+
+      const rowsByCategory = { HINSA: [], AKRA: [], TANDOLA: [], PANGORA: [] };
+      allRows.forEach(r => {
+        const num = String(r.uniqueId || r.number || r.no || '');
+        const first = Number(r.firstPrice ?? r.f ?? 0) || 0;
+        const second = Number(r.secondPrice ?? r.s ?? 0) || 0;
+        const cat = categorize(num);
+        if (cat in rowsByCategory) rowsByCategory[cat].push([num, first, second]);
+      });
+
+      const winningNumbersForDraw = await fetchWinningNumbersForDraw(dateParam, draw);
+      let firstSale = 0;
+      let secondSale = 0;
+      let prize = 0;
+      let commission = 0;
+
+      Object.entries(rowsByCategory).forEach(([cat, rows]) => {
+        const catFirst = rows.reduce((acc, [, f]) => acc + (Number(f) || 0), 0);
+        const catSecond = rows.reduce((acc, [, , s]) => acc + (Number(s) || 0), 0);
+        const catSale = catFirst + catSecond;
+        firstSale += catFirst;
+        secondSale += catSecond;
+        commission += (catSale * (Number(rates[cat]) || 0)) / 100;
+
+        const multiplier = Number(multipliers[cat]) || 1;
+        rows.forEach(([num, f, s]) => {
+          for (const winning of winningNumbersForDraw) {
+            if (num === winning.number || checkPositionalMatch(num, winning.number)) {
+              if (winning.type === 'first') prize += (Number(f) || 0) * multiplier;
+              else if (winning.type === 'second' || winning.type === 'third') prize += ((Number(s) || 0) * multiplier) / secondPrizeDivisor;
+            }
+          }
+        });
+      });
+
+      const sale = firstSale + secondSale;
       const safi = sale - commission;
-      const hissa = Math.max(0, (winning || 0) - safi) * (Number(hissaShare) || 0);
-      const subTotal = safi - (winning || 0);
-      result.rows[k] = { first, second, sale, winning, commission, safi, hissa, subTotal };
-      result.totals.first += first;
-      result.totals.second += second;
+      const subTotal = safi - prize;
+      const hissa = Math.max(0, prize - safi) * hissaShare;
+
+      result.drawRows.push({
+        drawId: draw._id,
+        drawName: formatTimeSlotLabel(draw),
+        first: firstSale,
+        second: secondSale,
+        sale,
+        prize,
+        commission,
+        safi,
+        hissa,
+        subTotal,
+      });
+
+      result.totals.first += firstSale;
+      result.totals.second += secondSale;
       result.totals.sale += sale;
-      result.totals.prize += winning;
+      result.totals.prize += prize;
       result.totals.commission += commission;
-      result.totals.hissa += hissa;
       result.totals.subTotal += subTotal;
-    });
+      result.totals.hissa += hissa;
+    }
 
     result.totals.safi = result.totals.sale - result.totals.commission;
-    result.totals.hissa = Math.max(0, (result.totals.prize || 0) - result.totals.safi) * (Number(hissaShare) || 0);
+    result.totals.hissa = Math.max(0, result.totals.prize - result.totals.safi) * hissaShare;
     result.totals.subTotal = result.totals.safi - result.totals.prize;
+    result.totals.bill = result.totals.subTotal - result.totals.hissa;
 
-    return result;
+    return result.drawRows.length > 0 ? result : null;
   };
   // Numeric helpers: avoid floating point drift and format consistently
   const toCents = (v) => Math.round((Number(v) || 0) * 100);
@@ -438,7 +542,7 @@ const Reports = () => {
       }
   };
 
-  const fetchVoucherData = async (selectedDate, selectedTimeSlot, explicitUserId = null, requireClosed = false) => {
+  const fetchVoucherData = async (selectedDate, selectedTimeSlot, explicitUserId = null, requireClosed = false, explicitTimeSlotId = null) => {
       // If current user is not a regular user, require selecting a client (unless explicitUserId provided)
       if (role !== 'user' && !selectedClient && !explicitUserId) {
         toast('Please select a client');
@@ -446,17 +550,17 @@ const Reports = () => {
       }
       setLoading(true);
       try {
-        const token = localStorage.getItem("token");
         const params = {};
         // Use explicitUserId when provided; otherwise resolve from role/selectedClient
         params.userId = explicitUserId || (role === 'user' ? currentUserId : selectedClient);
         // Always include a date parameter (backend requires date + userId)
         params.date = selectedDate || drawDate;
         // Prefer timeSlotId when available
-        if (selectedDraw && selectedDraw._id) params.timeSlotId = selectedDraw._id;
+        if (explicitTimeSlotId) params.timeSlotId = explicitTimeSlotId;
+        else if (selectedDraw && selectedDraw._id) params.timeSlotId = selectedDraw._id;
         else if (selectedTimeSlot) params.timeSlot = selectedTimeSlot;
         if (requireClosed) params.requireClosed = true;
-        const response = await axios.get("/api/v1/data/get-client-data", { params, headers: { Authorization: `Bearer ${token}` } });
+        const response = await axios.get("/api/v1/data/get-client-data", { params });
         return response.data.data || [];
       } catch (error) {
         toast.error((error.response?.data?.error) || 'Failed to fetch voucher data');
@@ -537,8 +641,7 @@ const Reports = () => {
         fetchedClientConfig = clients.find(c => String(c._id) === String(clientIdToUse));
         if (!fetchedClientConfig) {
         try {
-          const token = localStorage.getItem('token') || localStorage.getItem('adminToken');
-          const resp = await axios.get(`/api/v1/users/${clientIdToUse}`, { headers: { Authorization: `Bearer ${token}` } });
+          const resp = await axios.get(`/api/v1/users/${clientIdToUse}`);
           // API may return the user object directly or wrapped (resp.data.user / resp.data.data)
           fetchedClientConfig = resp.data?.user || resp.data?.data || resp.data || null;
         } catch (err) {
@@ -1260,195 +1363,97 @@ const Reports = () => {
   };
 
   const generateDailyBillPDF = async () => {
-      console.log("Generating Daily Bill PDF...");
-  
-      const fetchedEntries = await fetchVoucherData(drawDate, drawTime);
-      if (!Array.isArray(fetchedEntries) || fetchedEntries.length === 0) {
-        toast("No record found for the selected date.");
+      const result = await buildDailyBillResult(drawDate, drawTime);
+      if (!result) {
+        toast('No record found for the selected date.');
         return;
       }
-  
+
       const doc = new jsPDF("p", "mm", "a4");
       const pageWidth = doc.internal.pageSize.width;
-  
-      // Header
+      const pageHeight = doc.internal.pageSize.height;
+      const x = 14;
+      const right = pageWidth - 14;
+
       doc.setFont("helvetica", "bold");
-      doc.setFontSize(18);
-      doc.text("Daily Bill", pageWidth / 2, 15, { align: "center" });
-  
-      doc.setFontSize(12);
+      doc.setFontSize(16);
+      doc.text("Daily Bill", pageWidth / 2, 14, { align: "center" });
+
+      const dealerName = (clients.find(c => String(c._id) === String(selectedClient))?.username) || userData?.user?.username || '';
+      const dealerId = (clients.find(c => String(c._id) === String(selectedClient))?.dealerId) || userData?.user?.dealerId || '';
+
+      let y = 24;
       doc.setFont("helvetica", "normal");
-  const drawHeaderLabel = selectedDraw ? `${formatTimeSlotLabel(selectedDraw)}${selectedDraw.isActive === false ? ' (Closed)' : selectedDraw.isActive === true ? ' (Active)' : ''}` : `${drawDate}`;
-  const selectedClientName = (clients.find(c => String(c._id) === String(selectedClient))?.username) || userData?.user?.username || '';
-  doc.text(`Dealer: ${selectedClientName}`, 14, 30);
-  doc.text(`City: ${userData?.user.city}`, 14, 40);
-  doc.text(`Date: ${drawHeaderLabel}`, 14, 50);
-  
-  // Build the same daily-bill result used by the UI and render it
-  const result = await buildDailyBillResult(drawDate, drawTime);
-  if (!result) {
-    toast('No record found for the selected date.');
-    return;
-  }
+      doc.setFontSize(10);
+      doc.text(`Dealer ID: ${dealerId}`, x, y);
+      doc.text(`Date: ${drawDate}`, x + 62, y);
+      doc.text(`Commission: ${result.meta?.commissionLabel || ''}`, x + 110, y);
+      y += 7;
+      doc.text(`Dealer Name: ${dealerName}`, x, y);
+      doc.text(`City: ${userData?.user?.city || ''}`, x + 62, y);
+      doc.text(`Profit/Loss Share: ${formatCurrency(result.meta?.hissaPercent || 0)}%`, x + 110, y);
+      y += 8;
 
-  const types = ['HINSA','AKRA','TANDOLA','PANGORA'];
-  let y = 70;
-  const rowHeight = 8;
-  const x = 14;
-  const rightMargin = 14;
-  const tableWidth = pageWidth - x - rightMargin;
-  const firstColWidth = 22;
-  const otherColWidth = (tableWidth - firstColWidth) / 8;
-  const colWidths = [firstColWidth, ...Array(8).fill(otherColWidth)];
+      const rowHeight = 8;
+      const colWidths = [80, 60, 40]; // Draw Name, Sale, Prize
 
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(8);
-  const headers = ['Type','First Sale','Second Sale','Total Sale','Prize Amount','Safi Sale','Sub Total','Commission','Hissa'];
-  let hx = x;
-  for (let i = 0; i < headers.length; i++) {
-    doc.rect(hx, y, colWidths[i], rowHeight);
-    doc.text(headers[i], hx + 1.2, y + 5.3);
-    hx += colWidths[i];
-  }
-  y += rowHeight;
+      doc.setFont("helvetica", "bold");
+      doc.rect(x, y, colWidths[0], rowHeight);
+      doc.text("DRAW NAME", x + 2, y + 5.5);
+      doc.rect(x + colWidths[0], y, colWidths[1], rowHeight);
+      doc.text("SALE", x + colWidths[0] + 2, y + 5.5);
+      doc.rect(x + colWidths[0] + colWidths[1], y, colWidths[2], rowHeight);
+      doc.text("PRIZE", x + colWidths[0] + colWidths[1] + 2, y + 5.5);
+      y += rowHeight;
 
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(8);
+      doc.setFont("helvetica", "normal");
+      for (const row of (result.drawRows || [])) {
+        if (y > pageHeight - 45) {
+          doc.addPage();
+          y = 20;
+        }
+        doc.rect(x, y, colWidths[0], rowHeight);
+        doc.text(String(row.drawName || ''), x + 2, y + 5.5);
+        doc.rect(x + colWidths[0], y, colWidths[1], rowHeight);
+        doc.text(formatCurrency(row.sale), x + colWidths[0] + 2, y + 5.5);
+        doc.rect(x + colWidths[0] + colWidths[1], y, colWidths[2], rowHeight);
+        doc.text(formatCurrency(row.prize), x + colWidths[0] + colWidths[1] + 2, y + 5.5);
+        y += rowHeight;
+      }
 
-  types.forEach(k => {
-    const r = result.rows[k] || { first:0, second:0, sale:0, winning:0, commission:0, safi:0, hissa:0 };
-    let cx = x;
-    const values = [k, formatCurrency(r.first), formatCurrency(r.second), formatCurrency(r.sale), formatCurrency(r.winning), formatCurrency(r.safi), formatCurrency(r.subTotal), formatCurrency(r.commission), formatCurrency(r.hissa)];
-    for (let i = 0; i < values.length; i++) {
-      doc.rect(cx, y, colWidths[i], rowHeight);
-      doc.text(String(values[i]), cx + 1.2, y + 5.3);
-      cx += colWidths[i];
-    }
-    y += rowHeight;
-    if (y > doc.internal.pageSize.height - 40) {
-      doc.addPage();
-      y = 30;
-    }
-  });
+      y += 6;
+      if (y > pageHeight - 55) {
+        doc.addPage();
+        y = 20;
+      }
 
-  const totals = result.totals || { first:0, second:0, sale:0, prize:0, safi:0, subTotal:0, commission:0, hissa:0 };
-  let cx = x;
-  const totalValues = ['TOTAL', formatCurrency(totals.first), formatCurrency(totals.second), formatCurrency(totals.sale), formatCurrency(totals.prize), formatCurrency(totals.safi), formatCurrency(totals.subTotal), formatCurrency(totals.commission), formatCurrency(totals.hissa)];
-  doc.setFont("helvetica", "bold");
-  for (let i = 0; i < totalValues.length; i++) {
-    doc.rect(cx, y, colWidths[i], rowHeight);
-    doc.text(String(totalValues[i]), cx + 1.2, y + 5.3);
-    cx += colWidths[i];
-  }
+      const totals = result.totals || { sale: 0, safi: 0, prize: 0, subTotal: 0, commission: 0, hissa: 0, bill: 0 };
+      doc.setFont("helvetica", "normal");
+      doc.text(`SALE-TOTAL: ${formatCurrency(totals.sale)}`, x + 1, y); y += 7;
+      doc.text(`SAFI-SALE: ${formatCurrency(totals.safi)}`, x + 1, y); y += 7;
+      doc.text(`PRIZE: ${formatCurrency(totals.prize)}`, x + 1, y); y += 7;
+      doc.text(`SUB TOTAL: ${formatCurrency(totals.subTotal)}`, x + 1, y); y += 7;
+      doc.text(`COMMISSION: ${formatCurrency(totals.commission)}`, x + 1, y); y += 7;
+      doc.text(`PROFIT/LOSS SHARE: ${formatCurrency(totals.hissa)}`, x + 1, y); y += 10;
 
-  doc.save("Daily_Bill_RLC.pdf");
-  toast.success("Daily Bill PDF downloaded successfully!");
+      doc.setFont("helvetica", "bold");
+      doc.rect(x, y - 5, right - x, 9);
+      doc.text(`Bill: ${formatCurrency(totals.bill)}`, x + 2, y + 1.5);
+
+      doc.save("Daily_Bill_RLC.pdf");
+      toast.success("Daily Bill PDF downloaded successfully!");
   };
 
   // Compute daily bill values and keep in state for UI display
   const [dailyBill, setDailyBill] = useState(null);
 
   const computeDailyBill = async () => {
-    const fetchedEntries = await fetchVoucherData(drawDate, drawTime);
-    if (!Array.isArray(fetchedEntries) || fetchedEntries.length === 0) {
+    const result = await buildDailyBillResult(drawDate, drawTime);
+    if (!result) {
       toast('No records found for selected date');
       setDailyBill(null);
       return;
     }
-
-    // Flatten all rows depending on draw selection
-    let allRows = [];
-    if (selectedDraw && selectedDraw._id) {
-      allRows = fetchedEntries.flatMap(e => e.data.map(d => ({ ...d })));
-    } else {
-      fetchedEntries.forEach(e => { if (Array.isArray(e.data)) allRows.push(...e.data); });
-    }
-
-    // categorize helper
-    const categorize = (num) => {
-      if (/^\d{1}$/.test(num) || (num.includes('+') && num.length === 2) || (num.split('+').length - 1 === 2 && num.length === 3) || (num.split('+').length - 1 === 3 && num.length === 4)) return 'HINSA';
-      if (/^\d{2}$/.test(num) || (num.includes('+') && num.length <= 3) || (num.split('+').length - 1 === 2 && num.length === 4)) return 'AKRA';
-      if (/^\d{3}$/.test(num) || (num.length === 4 && num.includes('+'))) return 'TANDOLA';
-      if (/^\d{4}$/.test(num)) return 'PANGORA';
-      return 'OTHER';
-    };
-
-    const sections = { HINSA: [], AKRA: [], TANDOLA: [], PANGORA: [] };
-    allRows.forEach(r => {
-      const num = r.uniqueId || r.number || r.no || '';
-      const first = Number(r.firstPrice ?? r.f ?? 0) || 0;
-      const second = Number(r.secondPrice ?? r.s ?? 0) || 0;
-      const cat = categorize(String(num));
-      if (cat in sections) sections[cat].push([String(num), first, second]);
-    });
-
-    // Ensure we have the latest winning numbers (avoid stale state)
-    const latestWinningNumbers = await getWinningNumbers(drawDate);
-    const secondPrizeDivisor = 3;
-    // computeSectionTotals now accepts the winningNumbers list to compute prizes
-    const computeSectionTotals = (rows, multiplier, wn) => {
-      const totals = rows.reduce((acc, [, f, s]) => { acc.first += f; acc.second += s; return acc; }, { first: 0, second: 0 });
-      // compute winning amount for this section
-      let firstWinning = 0, secondWinning = 0;
-      rows.forEach(([num, f, s]) => {
-        // Directly check matching against provided winning numbers (do not rely on getEntryColor/state)
-        for (const winning of (wn || [])) {
-          if (num === winning.number || checkPositionalMatch(num, winning.number)) {
-            if (winning.type === 'first') firstWinning += f * multiplier;
-            else if (winning.type === 'second' || winning.type === 'third') secondWinning += (s * multiplier) / secondPrizeDivisor;
-          }
-        }
-      });
-      return { totals, winning: firstWinning + secondWinning };
-    };
-
-    // Resolve client/user config for commission and multipliers
-    const selectedClientConfig = clients.find(c => String(c._id) === String(selectedClient));
-    const baseConfig = role === 'user' ? userData?.user : (selectedClientConfig || userData?.user || {});
-    // Use user's `commission` field (percentage) as Hissa share. Default to 0 if not set.
-    const hissaShare = (Number(baseConfig.commission ?? 0) || 0) / 100;
-    const multipliers = {
-      HINSA: Number(baseConfig.hinsaMultiplier ?? 0) || 0,
-      AKRA: Number(baseConfig.akraMultiplier ?? 0) || 0,
-      TANDOLA: Number(baseConfig.tandolaMultiplier ?? 0) || 0,
-      PANGORA: Number(baseConfig.pangoraMultiplier ?? 0) || 0,
-    };
-    const rates = {
-      HINSA: Number(baseConfig.singleFigure || 0),
-      AKRA: Number(baseConfig.doubleFigure || 0),
-      TANDOLA: Number(baseConfig.tripleFigure || 0),
-      PANGORA: Number(baseConfig.fourFigure || 0),
-    };
-
-    const result = { rows: {}, totals: { first:0, second:0, sale:0, prize:0, commission:0, safi:0, hissa:0, subTotal:0 } };
-
-    Object.entries(sections).forEach(([k, rows]) => {
-      const multiplier = multipliers[k] || 1;
-      const { totals, winning } = computeSectionTotals(rows, multiplier, latestWinningNumbers);
-      const first = totals.first; const second = totals.second; const sale = first + second;
-      const commission = (sale * (rates[k] || 0)) / 100;
-      const safi = sale - commission;
-      // Hissa = max(0, prize - safi) * hissaShare (use prize = winning)
-      const hissa = Math.max(0, (winning || 0) - safi) * (Number(hissaShare) || 0);
-      const subTotal = safi - (winning || 0);
-      result.rows[k] = { first, second, sale, winning, commission, safi, hissa, subTotal };
-      result.totals.first += first;
-      result.totals.second += second;
-      result.totals.sale += sale;
-      result.totals.prize += winning;
-      result.totals.commission += commission;
-      // accumulate hissa per-type but final safi/hissa will be recomputed below
-      result.totals.hissa += hissa;
-      result.totals.subTotal += subTotal;
-    });
-
-    // Ensure safi is exactly total sale minus total commission (avoid per-type rounding drift)
-    result.totals.safi = result.totals.sale - result.totals.commission;
-    // Recompute total hissa based on aggregated safi and total prize
-    result.totals.hissa = Math.max(0, (result.totals.prize || 0) - result.totals.safi) * (Number(hissaShare) || 0);
-    // Recompute aggregated subTotal as aggregated safi minus aggregated prize
-    result.totals.subTotal = result.totals.safi - result.totals.prize;
-
     setDailyBill(result);
   };
 
@@ -1479,22 +1484,29 @@ const Reports = () => {
   
 
   return (
-    <div className="bg-gray-900 text-white p-6 rounded-xl max-w-4xl mx-auto">
+    <div className="bg-gray-900 text-white p-4 md:p-6 rounded-xl max-w-6xl mx-auto w-full">
       <h2 className="text-2xl font-bold mb-4">Client Reports</h2>
-      <div className="flex flex-col md:flex-row gap-4 mb-4">
-        <div>
+      <div className="flex flex-wrap items-end gap-3 md:gap-4 mb-4">
+        <div className="min-w-[150px]">
           <label className="block mb-1">Date</label>
-          <input type="date" value={drawDate} onChange={e => setDrawDate(e.target.value)} className="bg-gray-700 text-white px-3 py-2 rounded border border-gray-600" />
+          <input type="date" value={drawDate} onChange={e => setDrawDate(e.target.value)} className="bg-gray-700 text-white px-3 py-2 rounded border border-gray-600 w-full" />
         </div>
-        <div>
+        <div className="min-w-[200px] flex-1">
           <label className="block mb-1">Select Time Slot</label>
-          <select value={selectedDraw?._id || ""} onChange={e => {
+          <select value={dailyBillAllClosed ? ALL_CLOSED_DRAWS : (selectedDraw?._id || "")} onChange={e => {
             const id = e.target.value;
+            if (id === ALL_CLOSED_DRAWS) {
+              setDailyBillAllClosed(true);
+              setSelectedDraw(null);
+              return;
+            }
+            setDailyBillAllClosed(false);
             const d = draws.find(x => String(x._id) === String(id)) || null;
             setSelectedDraw(d);
-            if (d && d.draw_date) setDrawDate(new Date(d.draw_date).toISOString().split('T')[0]);
-          }} className="bg-gray-700 text-white px-3 py-2 rounded border border-gray-600">
+            if (d && d.draw_date) setDrawDate(toLocalISODate(d.draw_date));
+          }} className="bg-gray-700 text-white px-3 py-2 rounded border border-gray-600 w-full">
             <option value="">-- Select time slot --</option>
+            {ledger === 'DAILY BILL' && <option value={ALL_CLOSED_DRAWS}>All Closed Draws</option>}
             {draws.map(d => (
               <option key={d._id} value={d._id}>{`${formatTimeSlotLabel(d)}${d.isActive === false ? ' (Closed)' : d.isActive === true ? ' (Active)' : ''}`}</option>
             ))}
@@ -1503,9 +1515,9 @@ const Reports = () => {
         {/* Selected Draw info removed per request */}
         {/* Time selection removed: draw-level selection uses admin-managed draws now */}
         {role !== 'user' && (
-          <div>
+          <div className="min-w-[160px]">
             <label className="block mb-1">Client</label>
-            <select value={selectedClient} onChange={e => setSelectedClient(e.target.value)} className="bg-gray-700 text-white px-3 py-2 rounded border border-gray-600">
+            <select value={selectedClient} onChange={e => setSelectedClient(e.target.value)} className="bg-gray-700 text-white px-3 py-2 rounded border border-gray-600 w-full">
               <option value="">Select Client</option>
               {clients.map(client => (
                 <option key={client._id} value={client._id}>{client.username}</option>
@@ -1513,10 +1525,10 @@ const Reports = () => {
             </select>
           </div>
         )}
-        <div>
+        <div className="min-w-[140px]">
             <label className="block mb-1">Report</label>
             <select
-                className="bg-gray-700 text-gray-100 px-3 py-2 rounded-lg border border-gray-600 flex-1"
+                className="bg-gray-700 text-gray-100 px-3 py-2 rounded-lg border border-gray-600 w-full"
                 value={ledger}
                 onChange={(e) => setLedger(e.target.value)}
               >
@@ -1525,9 +1537,9 @@ const Reports = () => {
               <option>VOUCHER</option>
             </select>
         </div>
-        <div>
+        <div className="min-w-[140px]">
           <label className="block mb-1">Prize Type</label>
-          <select value={prizeType} onChange={(e) => setPrizeType(e.target.value)} className="bg-gray-700 text-white px-3 py-2 rounded border border-gray-600">
+          <select value={prizeType} onChange={(e) => setPrizeType(e.target.value)} className="bg-gray-700 text-white px-3 py-2 rounded border border-gray-600 w-full">
             <option>All</option>
             <option>Hinsa</option>
             <option>Akra</option>
@@ -1536,11 +1548,11 @@ const Reports = () => {
           </select>
         </div>
         <div className="flex items-end">
-          <button onClick={handleDownloadPDF} className="bg-green-600 px-4 py-2 rounded">Download</button>
+          <button onClick={handleDownloadPDF} className="bg-green-600 px-4 py-2 rounded whitespace-nowrap">Download</button>
         </div>
         <div className="flex items-end">
           {ledger === 'DAILY BILL' && (
-            <button onClick={computeDailyBill} className="ml-2 bg-blue-600 px-4 py-2 rounded">Compute Daily Bill</button>
+            <button onClick={computeDailyBill} className="bg-blue-600 px-4 py-2 rounded whitespace-nowrap">Compute Daily Bill</button>
           )}
         </div>
       </div>
@@ -1552,47 +1564,35 @@ const Reports = () => {
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="text-left text-gray-300">
-                  <th className="px-3 py-2">Type</th>
-                  <th className="px-3 py-2">First Sale</th>
-                  <th className="px-3 py-2">Second Sale</th>
-                  <th className="px-3 py-2">Total Sale</th>
-                  <th className="px-3 py-2">Prize Amount</th>
-                  <th className="px-3 py-2">Safi Sale</th>
-                  <th className="px-3 py-2">Sub Total</th>
-                  <th className="px-3 py-2">Commission</th>
-                  <th className="px-3 py-2">Hissa</th>
+                  <th className="px-3 py-2">Draw Name</th>
+                  <th className="px-3 py-2">Sale</th>
+                  <th className="px-3 py-2">Prize</th>
                 </tr>
               </thead>
               <tbody>
-                {['HINSA','AKRA','TANDOLA','PANGORA'].map(k => {
-                  const r = dailyBill.rows[k] || { first:0, second:0, sale:0, winning:0, commission:0, safi:0, hissa:0 };
-                  return (
-                    <tr key={k} className="border-t border-gray-700">
-                      <td className="px-3 py-2 font-semibold">{k}</td>
-                      <td className="px-3 py-2">{formatCurrency(r.first)}</td>
-                      <td className="px-3 py-2">{formatCurrency(r.second)}</td>
-                      <td className="px-3 py-2">{formatCurrency(r.sale)}</td>
-                      <td className="px-3 py-2">{formatCurrency(r.winning)}</td>
-                      <td className="px-3 py-2">{formatCurrency(r.safi)}</td>
-                      <td className="px-3 py-2">{formatCurrency(r.subTotal || (r.safi - (r.winning || 0)))}</td>
-                      <td className="px-3 py-2">{formatCurrency(r.commission)}</td>
-                      <td className="px-3 py-2">{formatCurrency(r.hissa)}</td>
-                    </tr>
-                  );
-                })}
+                {(dailyBill.drawRows || []).map((r) => (
+                  <tr key={r.drawId || r.drawName} className="border-t border-gray-700">
+                    <td className="px-3 py-2 font-semibold">{r.drawName}</td>
+                    <td className="px-3 py-2">{formatCurrency(r.sale)}</td>
+                    <td className="px-3 py-2">{formatCurrency(r.prize)}</td>
+                  </tr>
+                ))}
                 <tr className="border-t border-gray-600 font-semibold text-gray-200">
                   <td className="px-3 py-2">TOTAL</td>
-                  <td className="px-3 py-2">{formatCurrency(dailyBill.totals.first)}</td>
-                  <td className="px-3 py-2">{formatCurrency(dailyBill.totals.second)}</td>
                   <td className="px-3 py-2">{formatCurrency(dailyBill.totals.sale)}</td>
                   <td className="px-3 py-2">{formatCurrency(dailyBill.totals.prize)}</td>
-                  <td className="px-3 py-2">{formatCurrency(dailyBill.totals.safi)}</td>
-                  <td className="px-3 py-2">{formatCurrency(dailyBill.totals.subTotal)}</td>
-                  <td className="px-3 py-2">{formatCurrency(dailyBill.totals.commission)}</td>
-                  <td className="px-3 py-2">{formatCurrency(dailyBill.totals.hissa)}</td>
                 </tr>
               </tbody>
             </table>
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+              <div>Total Sale: <span className="font-semibold">{formatCurrency(dailyBill.totals.sale)}</span></div>
+              <div>Safi Sale: <span className="font-semibold">{formatCurrency(dailyBill.totals.safi)}</span></div>
+              <div>Prize: <span className="font-semibold">{formatCurrency(dailyBill.totals.prize)}</span></div>
+              <div>Sub Total: <span className="font-semibold">{formatCurrency(dailyBill.totals.subTotal)}</span></div>
+              <div>Commission: <span className="font-semibold">{formatCurrency(dailyBill.totals.commission)}</span></div>
+              <div>Hissa: <span className="font-semibold">{formatCurrency(dailyBill.totals.hissa)}</span></div>
+              <div>Bill: <span className="font-semibold">{formatCurrency(dailyBill.totals.bill)}</span></div>
+            </div>
           </div>
         </div>
       )}

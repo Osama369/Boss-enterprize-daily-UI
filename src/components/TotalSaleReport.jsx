@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import axios from 'axios';
 import jsPDF from 'jspdf';
 import { useSelector } from 'react-redux';
@@ -18,26 +18,52 @@ const TotalSaleReport = () => {
   const [ledger, setLedger] = useState('general');
   const [winningNumbers, setWinningNumbers] = useState([]);
 
-  useEffect(() => {
-    const fetchTimeSlots = async () => {
-      try {
-        const token = userData?.token || localStorage.getItem('token');
-        const headers = token ? { Authorization: `Bearer ${token}` } : {};
-        const res = await axios.get('/api/v1/timeslots', { headers });
-        const slots = res.data?.timeSlots || res.data || [];
-        setDraws(slots);
-        // default to first active slot if none selected
-        if ((!selectedDraw || !selectedDraw._id) && Array.isArray(slots) && slots.length > 0) {
-          const firstActive = slots.find(s => s.isActive === true) || slots[0];
-          setSelectedDraw(firstActive || null);
+  const fetchTimeSlots = useCallback(async () => {
+    try {
+      const res = await axios.get('/api/v1/timeslots');
+      const slots = res.data?.timeSlots || res.data || [];
+      const list = Array.isArray(slots) ? slots : [];
+      setDraws(list);
+      setSelectedDraw((prev) => {
+        if (prev && prev._id) {
+          const refreshed = list.find((s) => String(s._id) === String(prev._id));
+          return refreshed || null;
         }
-      } catch (err) {
-        console.error('Failed to fetch timeslots', err);
-        setDraws([]);
-      }
-    };
+        if (list.length > 0) return list.find((s) => s.isActive === true) || list[0];
+        return null;
+      });
+    } catch (err) {
+      console.error('Failed to fetch timeslots', err);
+      setDraws([]);
+    }
+  }, []);
+
+  useEffect(() => {
     fetchTimeSlots();
-  }, [userData]);
+  }, [fetchTimeSlots, userData]);
+
+  // Live refresh timeslots when admin updates them.
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const onTimeSlotsUpdated = () => { fetchTimeSlots(); };
+    const onStorage = (e) => {
+      if (e.key === 'timeslots:lastUpdated') fetchTimeSlots();
+    };
+    const onFocus = () => { fetchTimeSlots(); };
+    const intervalId = window.setInterval(() => {
+      // Polling fallback for cross-machine updates.
+      fetchTimeSlots();
+    }, 20000);
+    window.addEventListener('timeslots:updated', onTimeSlotsUpdated);
+    window.addEventListener('storage', onStorage);
+    window.addEventListener('focus', onFocus);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener('timeslots:updated', onTimeSlotsUpdated);
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [fetchTimeSlots]);
 
   // Helper: format a timeslot object to 12-hour label (e.g. 13 -> "1PM" or label "13:00" -> "1PM")
   const formatTimeSlotLabel = (slot) => {
@@ -58,7 +84,6 @@ const TotalSaleReport = () => {
 
   const fetchCombinedVoucherData = async () => {
     try {
-      const token = localStorage.getItem('token');
       const params = {};
       if (role === 'user' && currentUserId) params.userId = currentUserId;
       // Always include a date parameter so backend filters by date + timeslot/timeSlotId
@@ -72,7 +97,6 @@ const TotalSaleReport = () => {
       // Call the backend combined endpoint which returns Data docs populated with user info
       const res = await axios.get('/api/v1/data/get-combined-voucher-data', {
         params,
-        headers: { Authorization: token ? `Bearer ${token}` : undefined },
       });
       return res.data.data || [];
     } catch (err) {
@@ -84,12 +108,11 @@ const TotalSaleReport = () => {
 
   const getWinningNumbers = async (date) => {
     try {
-      const token = localStorage.getItem('token');
       const params = {};
       const safeISODate = (d) => { try { if (!d) return ''; const dt = typeof d === 'string' ? new Date(d) : new Date(d); if (isNaN(dt.getTime())) return ''; return dt.toISOString().split('T')[0]; } catch (e) { return ''; } };
       if (selectedDraw && selectedDraw.draw_date) params.date = safeISODate(selectedDraw.draw_date);
       else params.date = safeISODate(date) || date;
-      const response = await axios.get('/api/v1/data/get-winning-numbers', { params, headers: { Authorization: token ? `Bearer ${token}` : undefined } });
+      const response = await axios.get('/api/v1/data/get-winning-numbers', { params });
       if (response.data && response.data.winningNumbers) {
         const formattedNumbers = response.data.winningNumbers.map((item) => ({
           number: item.number,

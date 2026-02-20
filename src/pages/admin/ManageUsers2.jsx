@@ -17,11 +17,8 @@ const ManageUsers = () => {
       dispatch(showLoading());
       setError(null);
       setIsLoading(true);
-      
-      const token = localStorage.getItem("adminToken");
-      const response = await axios.get("/api/v1/users/", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+
+      const response = await axios.get("/api/v1/users/");
       console.log("Fetched users:", response.data);
       // Ensure we always set an array, even if response.data is undefined
       setUsers(Array.isArray(response?.data) ? response.data : []);
@@ -50,17 +47,10 @@ const ManageUsers = () => {
       // Using isActive field from your schema instead of status
       const newStatus = !user.isActive;
       
-      const token = localStorage.getItem("adminToken");
-      
       // Fix the API call structure - send data and headers separately
       await axios.put(
         `/api/v1/users/${id}/active`,
-        { isActive: newStatus }, // This is the request body
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
+        { isActive: newStatus } // This is the request body
       );
       
       // Update local state
@@ -88,12 +78,7 @@ const ManageUsers = () => {
       try {
         dispatch(showLoading());
         
-        const token = localStorage.getItem("adminToken");
-        await axios.delete(`/api/v1/users/${id}`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
+        await axios.delete(`/api/v1/users/${id}`);
         
         // Remove user from local state using functional update to ensure we have the latest state
         setUsers(prevUsers => prevUsers.filter(user => user._id !== id));

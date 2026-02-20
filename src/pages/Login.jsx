@@ -4,6 +4,7 @@ import axios from "axios";
 import { toast } from 'react-hot-toast';
 import { useDispatch } from "react-redux";
 import { showLoading, hideLoading } from "../redux/features/alertSlice";
+import { setUser } from "../redux/features/userSlice";
 import { FaUserShield, FaKey, FaEye, FaEyeSlash } from "react-icons/fa";
 
 const Login = () => {
@@ -29,7 +30,7 @@ const Login = () => {
 
     try {
       const response = await axios.post("/api/v1/auth/user-login", loginData);
-      localStorage.setItem("token", response.data.token);
+      if (response.data?.user) dispatch(setUser(response.data.user));
       setMessage("Login successful!");
       toast.success('Login successful');
       setTimeout(() => {

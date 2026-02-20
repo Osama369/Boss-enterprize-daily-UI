@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import toast from 'react-hot-toast';
-import { useSelector } from 'react-redux';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import TextField from '@mui/material/TextField';
@@ -27,9 +26,6 @@ import ToggleOnIcon from '@mui/icons-material/ToggleOn';
 import ToggleOffIcon from '@mui/icons-material/ToggleOff';
 
 const DrawList = () => {
-  const userData = useSelector((s) => s.user);
-  const token = userData?.token || localStorage.getItem('adminToken') || localStorage.getItem('token');
-
   const [slots, setSlots] = useState([]);
   const [loading, setLoading] = useState(false);
   const [hour, setHour] = useState(11);
@@ -47,11 +43,20 @@ const DrawList = () => {
   const [editOpen, setEditOpen] = useState(false);
   const [editSlot, setEditSlot] = useState(null);
 
+  const broadcastTimeSlotsUpdated = () => {
+    if (typeof window === 'undefined') return;
+    window.dispatchEvent(new CustomEvent('timeslots:updated'));
+    try {
+      window.localStorage.setItem('timeslots:lastUpdated', String(Date.now()));
+    } catch (e) {
+      // Ignore storage write issues.
+    }
+  };
+
   const fetchSlots = async () => {
     try {
       setLoading(true);
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const res = await axios.get('/api/v1/timeslots', { headers });
+      const res = await axios.get('/api/v1/timeslots');
       setSlots(res.data.timeSlots || res.data || []);
     } catch (err) {
       console.error('Failed to load timeslots', err);
@@ -62,19 +67,19 @@ const DrawList = () => {
     }
   };
 
-  useEffect(() => { fetchSlots(); }, [token]);
+  useEffect(() => { fetchSlots(); }, []);
 
   const handleCreate = async (e) => {
     e.preventDefault();
     try {
       setCreating(true);
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const res = await axios.post('/api/v1/timeslots', { hour: Number(hour), label }, { headers });
+      const res = await axios.post('/api/v1/timeslots', { hour: Number(hour), label });
       toast.success(res.data.message || 'TimeSlot created');
       const next = Math.min(23, Number(hour) + 1);
       setHour(next);
       setLabel(formatHourLabel(next));
-      fetchSlots();
+      await fetchSlots();
+      broadcastTimeSlotsUpdated();
     } catch (err) {
       console.error('Create failed', err);
       toast.error(err.response?.data?.error || 'Failed to create TimeSlot');
@@ -86,11 +91,11 @@ const DrawList = () => {
   const handleUpdate = async () => {
     if (!editSlot) return;
     try {
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      await axios.put(`/api/v1/timeslots/${editSlot._id}`, { label: editSlot.label, hour: Number(editSlot.hour) }, { headers });
+      await axios.put(`/api/v1/timeslots/${editSlot._id}`, { label: editSlot.label, hour: Number(editSlot.hour) });
       toast.success('Updated');
       setEditOpen(false);
-      fetchSlots();
+      await fetchSlots();
+      broadcastTimeSlotsUpdated();
     } catch (err) {
       console.error('Update failed', err);
       toast.error('Failed to update TimeSlot');
@@ -99,10 +104,10 @@ const DrawList = () => {
 
   const toggleActive = async (id, current) => {
     try {
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      await axios.put(`/api/v1/timeslots/${id}`, { isActive: !current }, { headers });
+      await axios.put(`/api/v1/timeslots/${id}`, { isActive: !current });
       toast.success('Updated');
-      fetchSlots();
+      await fetchSlots();
+      broadcastTimeSlotsUpdated();
     } catch (err) {
       console.error('Update failed', err);
       toast.error('Failed to update TimeSlot');

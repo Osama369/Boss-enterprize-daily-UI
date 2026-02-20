@@ -18,6 +18,7 @@ const apiBaseUrl = (import.meta.env.VITE_API_URL || '').trim();
 if (apiBaseUrl) {
   axios.defaults.baseURL = apiBaseUrl;
 }
+axios.defaults.withCredentials = true;
 
 createRoot(document.getElementById('root')).render(
   <Provider store={store}>

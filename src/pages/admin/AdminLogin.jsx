@@ -4,6 +4,7 @@ import axios from 'axios';
 import { useDispatch, useSelector } from 'react-redux';
 import toast from 'react-hot-toast';
 import { showLoading, hideLoading } from '../../redux/features/alertSlice';
+import { setUser } from '../../redux/features/userSlice';
 
 const AdminLogin = () => {
   const dispatch = useDispatch();
@@ -27,7 +28,7 @@ const AdminLogin = () => {
       dispatch(hideLoading());
 
       if (response.status === 200) {
-        localStorage.setItem('adminToken', response.data.token);
+        if (response.data?.user) dispatch(setUser(response.data.user));
         toast.success('Admin login successful');
         navigate('/admin'); // Redirect to admin dashboard
       }

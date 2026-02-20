@@ -25,12 +25,7 @@ const EditUser = () => {
     const fetchUser = async () => {
       try {
         setError("");
-        const token = localStorage.getItem("adminToken");
-        const response = await axios.get(`/api/v1/users/${id}`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
+        const response = await axios.get(`/api/v1/users/${id}`);
         setUserData(response.data);
       } catch (err) {
         console.error("Error fetching user:", err);
@@ -49,10 +44,7 @@ const EditUser = () => {
     try {
       setError("");
       dispatch(showLoading());
-      const token = localStorage.getItem("adminToken");
-      await axios.patch(`/api/v1/users/${id}`, updatedData, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      await axios.patch(`/api/v1/users/${id}`, updatedData);
       dispatch(hideLoading());
       toast.success("User updated successfully!");
       navigate("/admin/manage-users");
