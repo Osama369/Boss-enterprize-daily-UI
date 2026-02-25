@@ -6,7 +6,7 @@ import jsPDF from "jspdf";
 import toast from 'react-hot-toast';
 import { FixedSizeList as List } from 'react-window';
 import { FaBalanceScale, FaBell, FaStar } from 'react-icons/fa';
-import { Box, Grid, TextField, Button, Switch, FormControlLabel, Typography, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Checkbox, IconButton, Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions } from '@mui/material';
+import { Box, TextField, Button, Switch, FormControlLabel, Typography, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Checkbox, IconButton, Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import { useSelector, useDispatch } from "react-redux";
 import { showLoading, hideLoading } from '../redux/features/alertSlice';
@@ -608,10 +608,6 @@ function Center() {
       }
       sInputRef.current?.focus(); // Go to S
     }
-    if (e.key === 'Backspace' && !e.target.value) {
-      // go back to NO input if empty
-      noInputRef.current?.focus();
-    }
   };
 
   const handleSKeyDown = (e) => {
@@ -1033,6 +1029,8 @@ function Center() {
     }));
 
     addEntry(updatedEntries);
+    setNo('');
+    noInputRef.current?.focus();
 
     console.log(`✅ ${updatedEntries.length} entries added successfully!`);
   };
@@ -1078,6 +1076,8 @@ function Center() {
     }));
 
     addEntry(updatedEntries); // Or setEntries(...), depending on your app state
+    setNo('');
+    noInputRef.current?.focus();
   };
 
 
@@ -1116,6 +1116,8 @@ function Center() {
 
       // Add entries using your existing handler
       addEntry(updatedEntries);
+      setNo('');
+      noInputRef.current?.focus();
     }
   };
 
@@ -1151,6 +1153,8 @@ function Center() {
       });
 
       addEntry(updatedEntries);
+      setNo('');
+      noInputRef.current?.focus();
     }
   };
 
@@ -1186,6 +1190,8 @@ function Center() {
 
     // setEntries((prevEntries) => [...prevEntries, ...updatedEntries]);  // Append new entries
     addEntry(updatedEntries)
+    setNo('');
+    noInputRef.current?.focus();
   };
 
 
@@ -1220,6 +1226,8 @@ function Center() {
 
     // setEntries((prevEntries) => [...prevEntries, ...updatedEntries]);  // Append new entries
     addEntry(updatedEntries)
+    setNo('');
+    noInputRef.current?.focus();
   };
 
 
@@ -1249,6 +1257,8 @@ function Center() {
       }));
 
       addEntry(formatted);
+      setNo('');
+      noInputRef.current?.focus();
     } else {
       alert("Please enter a valid 3 to 8-digit number.");
     }
@@ -1279,6 +1289,8 @@ function Center() {
       };
 
       addEntry([threeDigit, twoDigit]);
+      setNo('');
+      noInputRef.current?.focus();
     } else {
       toast.error("Please enter exactly 3 digits and valid F/S values");
     }
@@ -3513,9 +3525,9 @@ function Center() {
                 <Typography variant="body2" sx={{ color: 'grey.300' }}>Distributors cannot add entries from this panel.</Typography>
               </Paper>
             ) : (
-              <Box component="form" onSubmit={(e) => { e.preventDefault(); handleSingleEntrySubmit(); }} sx={{ mt: 'auto', pt: 2, overflowX: 'hidden', position: 'sticky', bottom: 0, bgcolor: 'grey.800', p: 2, borderTop: '1px solid rgba(255,255,255,0.12)', boxShadow: '0 -8px 20px rgba(0,0,0,0.6)', zIndex: 20 }}>
-                <Grid container spacing={1.5} alignItems="center" wrap="wrap">
-                  <Grid item sx={{ flex: { xs: '1 1 100%', sm: '0 0 auto' }, width: { xs: '100%', sm: 'auto' } }}>
+              <Box component="form" onSubmit={(e) => { e.preventDefault(); handleSingleEntrySubmit(); }} sx={{ mt: 1.5, pt: 1.5, overflowX: 'hidden', bgcolor: 'grey.800', p: 2, borderTop: '1px solid rgba(255,255,255,0.12)' }}>
+                <Box sx={{ display: 'flex', alignItems: { xs: 'stretch', md: 'center' }, justifyContent: 'space-between', gap: { xs: 1.25, md: 2, lg: 2.5 }, flexWrap: { xs: 'wrap', lg: 'nowrap' } }}>
+                  <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(130px, 1fr))', lg: 'minmax(220px, 1.2fr) minmax(165px, 1fr) minmax(165px, 1fr)' }, gap: 1.5, flex: 1, minWidth: 0 }}>
                     <TextField
                       inputRef={noInputRef}
                       value={no}
@@ -3556,12 +3568,13 @@ function Center() {
                         setNo(out);
                       }}
                       sx={{
-                        width: { xs: '100%', sm: 220 },
+                        width: '100%',
                         '& .MuiOutlinedInput-root': {
                           color: '#fff',
                           backgroundColor: 'rgba(255,255,255,0.02)',
                           borderRadius: 1,
                           minHeight: 44,
+                          height: 44,
                           '& fieldset': { borderColor: 'rgba(255,255,255,0.08)' },
                           '&:hover fieldset': { borderColor: 'rgba(255,255,255,0.14)' },
                           '&.Mui-focused fieldset': { borderColor: 'rgba(255,255,255,0.25)' },
@@ -3573,8 +3586,6 @@ function Center() {
                       InputProps={{ sx: { color: '#fff' } }}
                       InputLabelProps={{ sx: { color: 'rgba(255,255,255,0.78)' } }}
                     />
-                  </Grid>
-                  <Grid item sx={{ flex: { xs: '1 1 100%', sm: '0 0 auto' }, width: { xs: '100%', sm: 'auto' } }}>
                     <TextField
                       inputRef={fInputRef}
                       value={f}
@@ -3587,12 +3598,13 @@ function Center() {
                       size="medium"
                       inputProps={{ inputMode: 'numeric', pattern: '[0-9]*', maxLength: 10 }}
                       sx={{
-                        width: { xs: '100%', sm: 180 },
+                        width: '100%',
                         '& .MuiOutlinedInput-root': {
                           color: '#fff',
                           backgroundColor: 'rgba(255,255,255,0.02)',
                           borderRadius: 2,
                           minHeight: 44,
+                          height: 44,
                           '& fieldset': { borderColor: 'rgba(255,255,255,0.08)' },
                           '&:hover fieldset': { borderColor: 'rgba(255,255,255,0.14)' },
                           '&.Mui-focused fieldset': { borderColor: 'rgba(255,255,255,0.25)' },
@@ -3604,8 +3616,6 @@ function Center() {
                       InputProps={{ sx: { color: '#fff' } }}
                       InputLabelProps={{ sx: { color: 'rgba(255,255,255,0.78)' } }}
                     />
-                  </Grid>
-                  <Grid item sx={{ flex: { xs: '1 1 100%', sm: '0 0 auto' }, width: { xs: '100%', sm: 'auto' } }}>
                     <TextField
                       inputRef={sInputRef}
                       value={s}
@@ -3618,12 +3628,13 @@ function Center() {
                       size="medium"
                       inputProps={{ inputMode: 'numeric', pattern: '[0-9]*', maxLength: 10 }}
                       sx={{
-                        width: { xs: '100%', sm: 180 },
+                        width: '100%',
                         '& .MuiOutlinedInput-root': {
                           color: '#fff',
                           backgroundColor: 'rgba(255,255,255,0.02)',
                           borderRadius: 1,
                           minHeight: 44,
+                          height: 44,
                           '& fieldset': { borderColor: 'rgba(255,255,255,0.08)' },
                           '&:hover fieldset': { borderColor: 'rgba(255,255,255,0.14)' },
                           '&.Mui-focused fieldset': { borderColor: 'rgba(255,255,255,0.25)' },
@@ -3635,14 +3646,18 @@ function Center() {
                       InputProps={{ sx: { color: '#fff' } }}
                       InputLabelProps={{ sx: { color: 'rgba(255,255,255,0.78)' } }}
                     />
-                  </Grid>
-                  <Grid item sx={{ display: 'flex', alignItems: 'center', justifyContent: { xs: 'space-between', sm: 'flex-start' }, gap: 1, width: { xs: '100%', sm: 'auto' } }}>
-                    <FormControlLabel control={<Switch checked={autoMode} onChange={toggleAutoMode} color="primary" />} label="Auto Mode" sx={{ mr: 0, '& .MuiFormControlLabel-label': { fontSize: 14, fontWeight: 600, color: '#F3F4F6' } }} />
-                    <Button type="submit" variant="contained" color="success" disabled={isPastClosingTime()} sx={{ fontSize: 14, fontWeight: 700, px: 2.2, py: 0.8 }}>
+                  </Box>
+                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: { xs: 'space-between', md: 'flex-end' }, gap: 1.25, width: { xs: '100%', md: 'auto' }, minWidth: { md: 220 }, flexShrink: 0, pl: { md: 1.25 }, borderLeft: { md: '1px solid rgba(255,255,255,0.08)' } }}>
+                    <FormControlLabel
+                      control={<Switch checked={autoMode} onChange={toggleAutoMode} color="primary" />}
+                      label="Auto Mode"
+                      sx={{ mr: 0, '& .MuiSwitch-root': { mr: 0.25 }, '& .MuiFormControlLabel-label': { fontSize: 14, fontWeight: 600, color: '#F3F4F6', lineHeight: 1, whiteSpace: 'nowrap' } }}
+                    />
+                    <Button type="submit" variant="contained" color="success" disabled={isPastClosingTime()} sx={{ fontSize: 14, fontWeight: 700, px: 2.2, height: 44, minWidth: 88 }}>
                       Save
                     </Button>
-                  </Grid>
-                </Grid>
+                  </Box>
+                </Box>
               </Box>
             )}
 
