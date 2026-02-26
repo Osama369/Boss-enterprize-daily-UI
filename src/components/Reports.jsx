@@ -7,6 +7,7 @@ import toast from 'react-hot-toast';
 
 const Reports = () => {
   const ALL_CLOSED_DRAWS = '__ALL_CLOSED_DRAWS__';
+  const DISTRIBUTOR_SELF_BILL = '__DISTRIBUTOR_SELF_BILL__';
   const userData = useSelector((state) => state.user);
   const role = userData?.user?.role;
   const currentUserId = userData?.user?._id;
@@ -180,8 +181,11 @@ const Reports = () => {
 
   // Helper to build daily bill result without mutating component state
   const buildDailyBillResult = async (dateParam = drawDate) => {
+    const isDistributorSelfBill = role === 'distributor' && String(selectedClient) === DISTRIBUTOR_SELF_BILL;
     const selectedClientConfig = clients.find(c => String(c._id) === String(selectedClient));
-    const baseConfig = role === 'user' ? userData?.user : (selectedClientConfig || userData?.user || {});
+    const baseConfig = isDistributorSelfBill
+      ? (userData?.user || {})
+      : (role === 'user' ? userData?.user : (selectedClientConfig || userData?.user || {}));
     const hissaShare = (Number(baseConfig.commission ?? 0) || 0) / 100;
     const multipliers = {
       HINSA: Number(baseConfig.hinsaMultiplier ?? 0) || 0,
@@ -255,9 +259,17 @@ const Reports = () => {
     };
 
     const secondPrizeDivisor = 3;
+    const sourceUserIds = isDistributorSelfBill
+      ? clients.map((c) => c?._id).filter(Boolean)
+      : [role === 'user' ? currentUserId : selectedClient].filter(Boolean);
+
+    if (!sourceUserIds.length) return null;
 
     for (const draw of targetDraws) {
-      const fetchedEntries = await fetchVoucherData(dateParam, null, null, false, draw?._id);
+      const fetchedEntriesByUser = await Promise.all(
+        sourceUserIds.map((uid) => fetchVoucherData(dateParam, null, uid, false, draw?._id))
+      );
+      const fetchedEntries = fetchedEntriesByUser.flat();
       let allRows = [];
       fetchedEntries.forEach(e => { if (Array.isArray(e.data)) allRows.push(...e.data); });
       if (allRows.length === 0) {
@@ -1365,6 +1377,10 @@ const Reports = () => {
   };
 
   const generateDailyBillPDF = async () => {
+      if (role !== 'user' && !selectedClient) {
+        toast('Please select a client');
+        return;
+      }
       const result = await buildDailyBillResult(drawDate, drawTime);
       if (!result) {
         toast('No record found for the selected date.');
@@ -1381,8 +1397,16 @@ const Reports = () => {
       doc.setFontSize(16);
       doc.text("Daily Bill", pageWidth / 2, 14, { align: "center" });
 
-      const dealerName = (clients.find(c => String(c._id) === String(selectedClient))?.username) || userData?.user?.username || '';
-      const dealerId = (clients.find(c => String(c._id) === String(selectedClient))?.dealerId) || userData?.user?.dealerId || '';
+      const isDistributorSelfBill = role === 'distributor' && String(selectedClient) === DISTRIBUTOR_SELF_BILL;
+      const dealerName = isDistributorSelfBill
+        ? (userData?.user?.username || '')
+        : ((clients.find(c => String(c._id) === String(selectedClient))?.username) || userData?.user?.username || '');
+      const dealerId = isDistributorSelfBill
+        ? (userData?.user?.dealerId || '')
+        : ((clients.find(c => String(c._id) === String(selectedClient))?.dealerId) || userData?.user?.dealerId || '');
+      const dealerCity = isDistributorSelfBill
+        ? (userData?.user?.city || '')
+        : ((clients.find(c => String(c._id) === String(selectedClient))?.city) || userData?.user?.city || '');
 
       let y = 24;
       doc.setFont("helvetica", "normal");
@@ -1392,7 +1416,7 @@ const Reports = () => {
       doc.text(`Commission: ${result.meta?.commissionLabel || ''}`, x + 110, y);
       y += 7;
       doc.text(`Dealer Name: ${dealerName}`, x, y);
-      doc.text(`City: ${userData?.user?.city || ''}`, x + 62, y);
+      doc.text(`City: ${dealerCity}`, x + 62, y);
       doc.text(`Profit/Loss Share: ${formatCurrency(result.meta?.hissaPercent || 0)}%`, x + 110, y);
       y += 8;
 
@@ -1450,6 +1474,10 @@ const Reports = () => {
   const [dailyBill, setDailyBill] = useState(null);
 
   const computeDailyBill = async () => {
+    if (role !== 'user' && !selectedClient) {
+      toast('Please select a client');
+      return;
+    }
     const result = await buildDailyBillResult(drawDate, drawTime);
     if (!result) {
       toast('No records found for selected date');
@@ -1521,6 +1549,9 @@ const Reports = () => {
             <label className="block mb-1">Client</label>
             <select value={selectedClient} onChange={e => setSelectedClient(e.target.value)} className="bg-gray-700 text-white px-3 py-2 rounded border border-gray-600 w-full">
               <option value="">Select Client</option>
+              {role === 'distributor' && (
+                <option value={DISTRIBUTOR_SELF_BILL}>My Daily Bill (Distributor)</option>
+              )}
               {clients.map(client => (
                 <option key={client._id} value={client._id}>{client.username}</option>
               ))}
