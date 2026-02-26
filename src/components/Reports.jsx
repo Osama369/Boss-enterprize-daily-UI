@@ -306,7 +306,7 @@ const Reports = () => {
       const sale = firstSale + secondSale;
       const safi = sale - commission;
       const subTotal = safi - prize;
-      const hissa = Math.max(0, prize - safi) * hissaShare;
+      const hissa = Math.abs(subTotal) * hissaShare;
 
       result.drawRows.push({
         drawId: draw._id,
@@ -331,9 +331,11 @@ const Reports = () => {
     }
 
     result.totals.safi = result.totals.sale - result.totals.commission;
-    result.totals.hissa = Math.max(0, result.totals.prize - result.totals.safi) * hissaShare;
     result.totals.subTotal = result.totals.safi - result.totals.prize;
-    result.totals.bill = result.totals.subTotal - result.totals.hissa;
+    result.totals.hissa = Math.abs(result.totals.subTotal) * hissaShare;
+    result.totals.bill = result.totals.subTotal >= 0
+      ? (result.totals.subTotal - result.totals.hissa)
+      : (result.totals.subTotal + result.totals.hissa);
 
     return result.drawRows.length > 0 ? result : null;
   };
