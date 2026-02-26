@@ -183,9 +183,17 @@ const Reports = () => {
   const buildDailyBillResult = async (dateParam = drawDate) => {
     const isDistributorSelfBill = role === 'distributor' && String(selectedClient) === DISTRIBUTOR_SELF_BILL;
     const selectedClientConfig = clients.find(c => String(c._id) === String(selectedClient));
-    const baseConfig = isDistributorSelfBill
+    let baseConfig = isDistributorSelfBill
       ? (userData?.user || {})
       : (role === 'user' ? userData?.user : (selectedClientConfig || userData?.user || {}));
+    if (isDistributorSelfBill && currentUserId) {
+      try {
+        const latest = await axios.get(`/api/v1/users/${currentUserId}`);
+        baseConfig = latest.data?.user || latest.data?.data || latest.data || baseConfig;
+      } catch (e) {
+        // keep fallback from redux state
+      }
+    }
     const hissaShare = (Number(baseConfig.commission ?? 0) || 0) / 100;
     const multipliers = {
       HINSA: Number(baseConfig.hinsaMultiplier ?? 0) || 0,
@@ -266,13 +274,106 @@ const Reports = () => {
     if (!sourceUserIds.length) return null;
 
     for (const draw of targetDraws) {
-      const fetchedEntriesByUser = await Promise.all(
-        sourceUserIds.map((uid) => fetchVoucherData(dateParam, null, uid, false, draw?._id))
-      );
-      const fetchedEntries = fetchedEntriesByUser.flat();
-      let allRows = [];
-      fetchedEntries.forEach(e => { if (Array.isArray(e.data)) allRows.push(...e.data); });
-      if (allRows.length === 0) {
+      const winningNumbersForDraw = await fetchWinningNumbersForDraw(dateParam, draw);
+      let firstSale = 0;
+      let secondSale = 0;
+      let prize = 0;
+      const categorySaleTotals = { HINSA: 0, AKRA: 0, TANDOLA: 0, PANGORA: 0 };
+
+      if (isDistributorSelfBill) {
+        // Distributor own bill: aggregate draw-wise sale/prize across all clients.
+        // Prize is computed per-client using that client's multipliers.
+        const fetchedEntriesByUser = await Promise.all(
+          sourceUserIds.map(async (uid) => {
+            const fetched = await fetchVoucherData(dateParam, null, uid, false, draw?._id);
+            const cfg = clients.find((c) => String(c._id) === String(uid)) || {};
+            return { uid, fetched, cfg };
+          })
+        );
+
+        fetchedEntriesByUser.forEach(({ fetched, cfg }) => {
+          const clientMultipliers = {
+            HINSA: Number(cfg.hinsaMultiplier ?? 0) || 0,
+            AKRA: Number(cfg.akraMultiplier ?? 0) || 0,
+            TANDOLA: Number(cfg.tandolaMultiplier ?? 0) || 0,
+            PANGORA: Number(cfg.pangoraMultiplier ?? 0) || 0,
+          };
+          const rowsByCategory = { HINSA: [], AKRA: [], TANDOLA: [], PANGORA: [] };
+          const allRows = [];
+          (fetched || []).forEach((e) => {
+            if (Array.isArray(e.data)) allRows.push(...e.data);
+          });
+          allRows.forEach((r) => {
+            const num = String(r.uniqueId || r.number || r.no || '');
+            const fVal = Number(r.firstPrice ?? r.f ?? 0) || 0;
+            const sVal = Number(r.secondPrice ?? r.s ?? 0) || 0;
+            const cat = categorize(num);
+            if (cat in rowsByCategory) rowsByCategory[cat].push([num, fVal, sVal]);
+          });
+
+          Object.entries(rowsByCategory).forEach(([cat, rows]) => {
+            const catFirst = rows.reduce((acc, [, fVal]) => acc + (Number(fVal) || 0), 0);
+            const catSecond = rows.reduce((acc, [, , sVal]) => acc + (Number(sVal) || 0), 0);
+            const catSale = catFirst + catSecond;
+            firstSale += catFirst;
+            secondSale += catSecond;
+            categorySaleTotals[cat] += catSale;
+
+            const multiplier = Number(clientMultipliers[cat]) || 1;
+            rows.forEach(([num, fVal, sVal]) => {
+              for (const winning of winningNumbersForDraw) {
+                if (num === winning.number || checkPositionalMatch(num, winning.number)) {
+                  if (winning.type === 'first') prize += (Number(fVal) || 0) * multiplier;
+                  else if (winning.type === 'second' || winning.type === 'third') prize += ((Number(sVal) || 0) * multiplier) / secondPrizeDivisor;
+                }
+              }
+            });
+          });
+        });
+      } else {
+        const fetchedEntries = await fetchVoucherData(dateParam, null, sourceUserIds[0], false, draw?._id);
+        let allRows = [];
+        fetchedEntries.forEach(e => { if (Array.isArray(e.data)) allRows.push(...e.data); });
+        if (allRows.length === 0) {
+          result.drawRows.push({
+            drawId: draw._id,
+            drawName: formatTimeSlotLabel(draw),
+            first: 0, second: 0, sale: 0, prize: 0, commission: 0, safi: 0, hissa: 0, subTotal: 0,
+          });
+          continue;
+        }
+
+        const rowsByCategory = { HINSA: [], AKRA: [], TANDOLA: [], PANGORA: [] };
+        allRows.forEach(r => {
+          const num = String(r.uniqueId || r.number || r.no || '');
+          const first = Number(r.firstPrice ?? r.f ?? 0) || 0;
+          const second = Number(r.secondPrice ?? r.s ?? 0) || 0;
+          const cat = categorize(num);
+          if (cat in rowsByCategory) rowsByCategory[cat].push([num, first, second]);
+        });
+
+        Object.entries(rowsByCategory).forEach(([cat, rows]) => {
+          const catFirst = rows.reduce((acc, [, f]) => acc + (Number(f) || 0), 0);
+          const catSecond = rows.reduce((acc, [, , s]) => acc + (Number(s) || 0), 0);
+          const catSale = catFirst + catSecond;
+          firstSale += catFirst;
+          secondSale += catSecond;
+          categorySaleTotals[cat] += catSale;
+
+          const multiplier = Number(multipliers[cat]) || 1;
+          rows.forEach(([num, f, s]) => {
+            for (const winning of winningNumbersForDraw) {
+              if (num === winning.number || checkPositionalMatch(num, winning.number)) {
+                if (winning.type === 'first') prize += (Number(f) || 0) * multiplier;
+                else if (winning.type === 'second' || winning.type === 'third') prize += ((Number(s) || 0) * multiplier) / secondPrizeDivisor;
+              }
+            }
+          });
+        });
+      }
+
+      const sale = firstSale + secondSale;
+      if (sale === 0 && prize === 0) {
         result.drawRows.push({
           drawId: draw._id,
           drawName: formatTimeSlotLabel(draw),
@@ -280,42 +381,10 @@ const Reports = () => {
         });
         continue;
       }
-
-      const rowsByCategory = { HINSA: [], AKRA: [], TANDOLA: [], PANGORA: [] };
-      allRows.forEach(r => {
-        const num = String(r.uniqueId || r.number || r.no || '');
-        const first = Number(r.firstPrice ?? r.f ?? 0) || 0;
-        const second = Number(r.secondPrice ?? r.s ?? 0) || 0;
-        const cat = categorize(num);
-        if (cat in rowsByCategory) rowsByCategory[cat].push([num, first, second]);
-      });
-
-      const winningNumbersForDraw = await fetchWinningNumbersForDraw(dateParam, draw);
-      let firstSale = 0;
-      let secondSale = 0;
-      let prize = 0;
-      let commission = 0;
-
-      Object.entries(rowsByCategory).forEach(([cat, rows]) => {
-        const catFirst = rows.reduce((acc, [, f]) => acc + (Number(f) || 0), 0);
-        const catSecond = rows.reduce((acc, [, , s]) => acc + (Number(s) || 0), 0);
-        const catSale = catFirst + catSecond;
-        firstSale += catFirst;
-        secondSale += catSecond;
-        commission += (catSale * (Number(rates[cat]) || 0)) / 100;
-
-        const multiplier = Number(multipliers[cat]) || 1;
-        rows.forEach(([num, f, s]) => {
-          for (const winning of winningNumbersForDraw) {
-            if (num === winning.number || checkPositionalMatch(num, winning.number)) {
-              if (winning.type === 'first') prize += (Number(f) || 0) * multiplier;
-              else if (winning.type === 'second' || winning.type === 'third') prize += ((Number(s) || 0) * multiplier) / secondPrizeDivisor;
-            }
-          }
-        });
-      });
-
-      const sale = firstSale + secondSale;
+      const commission = Object.entries(categorySaleTotals).reduce(
+        (sum, [cat, catSale]) => sum + ((Number(catSale) || 0) * (Number(rates[cat]) || 0)) / 100,
+        0
+      );
       const safi = sale - commission;
       const subTotal = safi - prize;
       const hissa = Math.abs(subTotal) * hissaShare;
