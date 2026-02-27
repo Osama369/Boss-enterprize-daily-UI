@@ -166,19 +166,6 @@ const Reports = () => {
     if (drawDate) getWinningNumbers(drawDate);
   }, [drawDate, selectedDraw]);
 
-  useEffect(() => {
-    if (ledger !== 'DAILY BILL') return;
-    if (!dailyBillAllClosed && !selectedDraw) return;
-    (async () => {
-      try {
-        const result = await buildDailyBillResult(drawDate, drawTime);
-        setDailyBill(result || null);
-      } catch (err) {
-        setDailyBill(null);
-      }
-    })();
-  }, [ledger, drawDate, selectedDraw, selectedClient, dailyBillAllClosed]);
-
   // Helper to build daily bill result without mutating component state
   const buildDailyBillResult = async (dateParam = drawDate) => {
     const isDistributorSelfBill = role === 'distributor' && String(selectedClient) === DISTRIBUTOR_SELF_BILL;
@@ -285,7 +272,14 @@ const Reports = () => {
         // Prize is computed per-client using that client's multipliers.
         const fetchedEntriesByUser = await Promise.all(
           sourceUserIds.map(async (uid) => {
-            const fetched = await fetchVoucherData(dateParam, null, uid, false, draw?._id);
+            const fetched = await fetchVoucherData(
+              dateParam,
+              null,
+              uid,
+              false,
+              draw?._id,
+              { suppressErrorToast: true, suppressClientRequiredToast: true }
+            );
             const cfg = clients.find((c) => String(c._id) === String(uid)) || {};
             return { uid, fetched, cfg };
           })
@@ -331,7 +325,14 @@ const Reports = () => {
           });
         });
       } else {
-        const fetchedEntries = await fetchVoucherData(dateParam, null, sourceUserIds[0], false, draw?._id);
+        const fetchedEntries = await fetchVoucherData(
+          dateParam,
+          null,
+          sourceUserIds[0],
+          false,
+          draw?._id,
+          { suppressErrorToast: true, suppressClientRequiredToast: true }
+        );
         let allRows = [];
         fetchedEntries.forEach(e => { if (Array.isArray(e.data)) allRows.push(...e.data); });
         if (allRows.length === 0) {
@@ -414,9 +415,14 @@ const Reports = () => {
     result.totals.safi = result.totals.sale - result.totals.commission;
     result.totals.subTotal = result.totals.safi - result.totals.prize;
     result.totals.hissa = Math.abs(result.totals.subTotal) * hissaShare;
-    result.totals.bill = result.totals.subTotal >= 0
-      ? (result.totals.subTotal - result.totals.hissa)
-      : (result.totals.subTotal + result.totals.hissa);
+    // Bill rule:
+    // - Profit case (subTotal >= 0): subtract share
+    // - Loss case   (subTotal < 0): add share back (reduces loss magnitude)
+    if (result.totals.subTotal >= 0) {
+      result.totals.bill = result.totals.subTotal - result.totals.hissa;
+    } else {
+      result.totals.bill = result.totals.subTotal + result.totals.hissa;
+    }
 
     return result.drawRows.length > 0 ? result : null;
   };
@@ -625,10 +631,18 @@ const Reports = () => {
       }
   };
 
-  const fetchVoucherData = async (selectedDate, selectedTimeSlot, explicitUserId = null, requireClosed = false, explicitTimeSlotId = null) => {
+  const fetchVoucherData = async (
+    selectedDate,
+    selectedTimeSlot,
+    explicitUserId = null,
+    requireClosed = false,
+    explicitTimeSlotId = null,
+    options = {}
+  ) => {
+      const { suppressErrorToast = false, suppressClientRequiredToast = false } = options || {};
       // If current user is not a regular user, require selecting a client (unless explicitUserId provided)
       if (role !== 'user' && !selectedClient && !explicitUserId) {
-        toast('Please select a client');
+        if (!suppressClientRequiredToast) toast('Please select a client');
         return [];
       }
       setLoading(true);
@@ -646,7 +660,9 @@ const Reports = () => {
         const response = await axios.get("/api/v1/data/get-client-data", { params });
         return response.data.data || [];
       } catch (error) {
-        toast.error((error.response?.data?.error) || 'Failed to fetch voucher data');
+        if (!suppressErrorToast) {
+          toast.error((error.response?.data?.error) || 'Failed to fetch voucher data');
+        }
         return [];
       } finally {
         setLoading(false);
@@ -1528,7 +1544,6 @@ const Reports = () => {
       doc.text(`SAFI-SALE: ${formatCurrency(totals.safi)}`, x + 1, y); y += 7;
       doc.text(`PRIZE: ${formatCurrency(totals.prize)}`, x + 1, y); y += 7;
       doc.text(`SUB TOTAL: ${formatCurrency(totals.subTotal)}`, x + 1, y); y += 7;
-      doc.text(`COMMISSION: ${formatCurrency(totals.commission)}`, x + 1, y); y += 7;
       doc.text(`PROFIT/LOSS SHARE: ${formatCurrency(totals.hissa)}`, x + 1, y); y += 10;
 
       doc.setFont("helvetica", "bold");
@@ -1691,7 +1706,6 @@ const Reports = () => {
               <div>Safi Sale: <span className="font-semibold">{formatCurrency(dailyBill.totals.safi)}</span></div>
               <div>Prize: <span className="font-semibold">{formatCurrency(dailyBill.totals.prize)}</span></div>
               <div>Sub Total: <span className="font-semibold">{formatCurrency(dailyBill.totals.subTotal)}</span></div>
-              <div>Commission: <span className="font-semibold">{formatCurrency(dailyBill.totals.commission)}</span></div>
               <div>Hissa: <span className="font-semibold">{formatCurrency(dailyBill.totals.hissa)}</span></div>
               <div>Bill: <span className="font-semibold">{formatCurrency(dailyBill.totals.bill)}</span></div>
             </div>
