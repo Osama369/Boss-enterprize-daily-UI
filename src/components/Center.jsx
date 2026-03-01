@@ -18,6 +18,7 @@ function Center() {
   const navigate = useNavigate();
   const dispatch = useDispatch();
   const userData = useSelector((state) => state.user);
+  const role = userData?.user?.role;
 
   // Winning numbers will be populated from admin settings via API;
   // start empty so we can hide the notification panel until set.
@@ -39,7 +40,9 @@ function Center() {
   const voucherDataRef = useRef([]);
   const [selectedEntries, setSelectedEntries] = useState([]);
   const tableContainerRef = useRef(null);
-  const [listHeight, setListHeight] = useState(600);
+  const [searchNumber, setSearchNumber] = useState("");
+  const [searchResults, setSearchResults] = useState(null); // null => search inactive
+  const [searchLoading, setSearchLoading] = useState(false);
 
   // Helper: format a timeslot object to 12-hour label (e.g. 13 -> "1PM" or label "13:00" -> "1PM")
   const formatTimeSlotLabel = (slot) => {
@@ -344,7 +347,12 @@ function Center() {
     }
   };
 
-  const groupedEntries = entries.reduce((acc, entry) => {
+  const searchNeedle = String(searchNumber || "").trim();
+  const isSearchActive = searchNeedle.length > 0;
+  const isDistributorSearchView = role === "distributor" && isSearchActive;
+  const tableEntries = isSearchActive ? (searchResults || []) : entries;
+
+  const groupedEntries = tableEntries.reduce((acc, entry) => {
     if (!acc[entry.parentId]) {
       acc[entry.parentId] = [];
     }
@@ -352,19 +360,57 @@ function Center() {
     return acc;
   }, {});
 
-  // measure container height and set virtual list height (must be a top-level hook)
+  // Search NO in visible table context.
+  // - user: local filter in own entries
+  // - distributor: API search across all own clients for selected date/slot
   useEffect(() => {
-    const measure = () => {
-      const el = tableContainerRef.current;
-      if (el) {
-        const h = el.clientHeight - 56; // subtract header row height
-        setListHeight(Math.max(120, h));
+    const q = String(searchNumber || "").trim();
+    if (!q) {
+      setSearchResults(null);
+      setSearchLoading(false);
+      return;
+    }
+
+    const timerId = window.setTimeout(async () => {
+      setSelectedEntries([]);
+      setSelectAll(false);
+      if (role === "distributor") {
+        if (!(selectedDraw && selectedDraw._id) || !drawDate) {
+          setSearchResults([]);
+          return;
+        }
+        setSearchLoading(true);
+        try {
+          const response = await axios.get("/api/v1/data/search-number", {
+            params: {
+              q,
+              date: drawDate,
+              timeSlotId: selectedDraw._id,
+            },
+          });
+          const rows = Array.isArray(response.data?.data) ? response.data.data : [];
+          setSearchResults(rows.map((row, idx) => ({
+            ...row,
+            id: row.objectId || `${row.parentId || "p"}_${row.no || "n"}_${idx}`,
+            selected: false,
+          })));
+        } catch (error) {
+          toast.error(error.response?.data?.error || "Failed to search number");
+          setSearchResults([]);
+        } finally {
+          setSearchLoading(false);
+        }
+      } else {
+        const needle = q.toLowerCase();
+        const localRows = (entries || []).filter((entry) =>
+          String(entry.no || "").toLowerCase().includes(needle)
+        );
+        setSearchResults(localRows);
       }
-    };
-    measure();
-    window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
-  }, [groupedEntries]);
+    }, 250);
+
+    return () => window.clearTimeout(timerId);
+  }, [searchNumber, role, selectedDraw?._id, drawDate, entries]);
 
   // When selectedDraw or drawDate changes, fetch corresponding voucher data
   useEffect(() => {
@@ -3281,7 +3327,7 @@ function Center() {
   return (
     <div className="flex-1 flex flex-col overflow-y-auto overflow-x-hidden w-full" style={{ minHeight: 'calc(100vh - 96px)', width: '100%', boxSizing: 'border-box', paddingLeft: 0 }}>
 
-      <Box sx={{ width: '100%', maxWidth: 1280, mx: 0, display: 'flex', gap: { xs: 1.5, md: 2 }, alignItems: 'flex-start', mt: 2, px: { xs: 1.25, sm: 2 } }}>
+      <Box sx={{ width: '100%', maxWidth: 1320, mx: 0, display: 'flex', gap: { xs: 1.25, md: 1.5 }, alignItems: 'flex-start', mt: 1.25, px: { xs: 1.25, sm: 2 } }}>
         
         {/* <Box sx={{ flex: 1 }}>
           {userData?.user?.role === 'distributor' ? (
@@ -3295,40 +3341,40 @@ function Center() {
           )}
         </Box> */}
 
-        <Box component={Paper} sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', rowGap: 1.25, columnGap: 1, width: '100%', bgcolor: 'grey.800', color: 'common.white', p: { xs: 0.9, md: 1 }, borderRadius: 1.5, border: '1px solid rgba(255,255,255,0.06)' }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, minWidth: 0, width: { xs: '100%', xl: 'auto' } }}>
+        <Box component={Paper} sx={{ display: 'flex', flexWrap: { xs: 'wrap', lg: 'nowrap' }, alignItems: 'center', justifyContent: 'space-between', rowGap: 0.75, columnGap: 0.75, width: '100%', bgcolor: 'grey.800', color: 'common.white', p: { xs: 0.7, md: 0.85 }, borderRadius: 1.5, border: '1px solid rgba(255,255,255,0.06)' }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, minWidth: 0, width: { xs: '100%', lg: 'auto' }, flexShrink: 0 }}>
             <FaBalanceScale className="text-blue-400" style={{ fontSize: 20 }} />
             <Typography variant="subtitle1" sx={{ color: 'grey.200', fontWeight: 700, mr: 1, letterSpacing: 0.6 }}>BALANCE</Typography>
-            <Box sx={{ bgcolor: 'grey.900', px: { xs: 1.5, md: 2.25 }, py: 0.7, borderRadius: 1, border: '1px solid rgba(255,255,255,0.06)', minWidth: { xs: 132, sm: 160 }, textAlign: 'right' }}>
+            <Box sx={{ bgcolor: 'grey.900', px: { xs: 1.25, md: 2 }, py: 0.6, borderRadius: 1, border: '1px solid rgba(255,255,255,0.06)', minWidth: { xs: 118, sm: 145 }, textAlign: 'right' }}>
               <Typography variant="h6" sx={{ color: 'grey.100', fontWeight: 800, fontSize: '1.05rem' }}>
                 {(() => { const raw = userData?.user?.balance; const num = Number(raw); return !isNaN(num) ? num.toLocaleString() : (raw ?? '-'); })()}
               </Typography>
             </Box>
           </Box>
 
-          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flex: 1, justifyContent: { xs: 'flex-start', xl: 'center' }, minWidth: 0, width: { xs: '100%', xl: 'auto' } }}>
-              <Box sx={{ display: 'flex', gap: 1.25, alignItems: 'center', flexWrap: 'wrap' }}>
-              <Box sx={{ bgcolor: 'grey.900', px: { xs: 1.25, md: 2.25 }, py: 0.65, borderRadius: 1, border: '1px solid rgba(255,255,255,0.06)', textAlign: 'center', minWidth: { xs: 76, sm: 92 } }}>
+          <Box sx={{ display: 'flex', gap: 0.75, alignItems: 'center', flex: 1, justifyContent: { xs: 'flex-start', lg: 'center' }, minWidth: 0, width: { xs: '100%', lg: 'auto' } }}>
+              <Box sx={{ display: 'flex', gap: 0.6, alignItems: 'center', flexWrap: { xs: 'wrap', lg: 'nowrap' } }}>
+              <Box sx={{ bgcolor: 'grey.900', px: { xs: 1.1, md: 1.8 }, py: 0.55, borderRadius: 1, border: '1px solid rgba(255,255,255,0.06)', textAlign: 'center', minWidth: { xs: 68, sm: 82 } }}>
                 <Typography variant="body2" sx={{ color: 'grey.400', fontWeight: 600, mb: 0.25 }}>Count</Typography>
                 <Typography variant="subtitle1" sx={{ color: 'grey.100', fontWeight: 800 }}>{distributorRecordCount}</Typography>
               </Box>
-              <Box sx={{ bgcolor: 'grey.900', px: { xs: 1.25, md: 2.25 }, py: 0.65, borderRadius: 1, border: '1px solid rgba(255,255,255,0.06)', textAlign: 'center', minWidth: { xs: 76, sm: 92 } }}>
+              <Box sx={{ bgcolor: 'grey.900', px: { xs: 1.1, md: 1.8 }, py: 0.55, borderRadius: 1, border: '1px solid rgba(255,255,255,0.06)', textAlign: 'center', minWidth: { xs: 68, sm: 82 } }}>
                 <Typography variant="body2" sx={{ color: 'grey.400', fontWeight: 600, mb: 0.25 }}>Total</Typography>
                 <Typography variant="subtitle1" sx={{ color: 'grey.100', fontWeight: 800 }}>{(() => { const n = Number(distributorGrandTotal); return !isNaN(n) ? n.toLocaleString() : '-'; })()}</Typography>
               </Box>
-              <Box sx={{ bgcolor: 'grey.900', px: { xs: 1.25, md: 2.25 }, py: 0.65, borderRadius: 1, border: '1px solid rgba(255,255,255,0.06)', textAlign: 'center', minWidth: { xs: 76, sm: 92 } }}>
+              <Box sx={{ bgcolor: 'grey.900', px: { xs: 1.1, md: 1.8 }, py: 0.55, borderRadius: 1, border: '1px solid rgba(255,255,255,0.06)', textAlign: 'center', minWidth: { xs: 68, sm: 82 } }}>
                 <Typography variant="body2" sx={{ color: 'grey.400', fontWeight: 600, mb: 0.25 }}>First</Typography>
                 <Typography variant="subtitle1" sx={{ color: 'grey.100', fontWeight: 800 }}>{(() => { const n = Number(distributorFirstTotal); return !isNaN(n) ? n.toLocaleString() : '-'; })()}</Typography>
               </Box>
-              <Box sx={{ bgcolor: 'grey.900', px: { xs: 1.25, md: 2.25 }, py: 0.65, borderRadius: 1, border: '1px solid rgba(255,255,255,0.06)', textAlign: 'center', minWidth: { xs: 76, sm: 92 } }}>
+              <Box sx={{ bgcolor: 'grey.900', px: { xs: 1.1, md: 1.8 }, py: 0.55, borderRadius: 1, border: '1px solid rgba(255,255,255,0.06)', textAlign: 'center', minWidth: { xs: 68, sm: 82 } }}>
                 <Typography variant="body2" sx={{ color: 'grey.400', fontWeight: 600, mb: 0.25 }}>Second</Typography>
                 <Typography variant="subtitle1" sx={{ color: 'grey.100', fontWeight: 800 }}>{(() => { const n = Number(distributorSecondTotal); return !isNaN(n) ? n.toLocaleString() : '-'; })()}</Typography>
               </Box>
             </Box>
           </Box>
 
-          <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1, minWidth: { xs: '100%', lg: 220 }, justifyContent: { xs: 'flex-start', xl: 'flex-end' }, width: { xs: '100%', lg: 'auto' } }}>
-            <input type="date" value={drawDate} onChange={(e) => setDrawDate(e.target.value)} style={{ background: 'transparent', color: '#fff', padding: '6px 10px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.12)', outline: 'none', minWidth: '150px', flex: '1 1 150px' }} />
+          <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: { xs: 'wrap', lg: 'nowrap' }, gap: 0.6, minWidth: { xs: '100%', lg: 190 }, justifyContent: { xs: 'flex-start', lg: 'flex-end' }, width: { xs: '100%', lg: 'auto' }, flexShrink: 0 }}>
+            <input type="date" value={drawDate} onChange={(e) => setDrawDate(e.target.value)} style={{ background: 'transparent', color: '#fff', padding: '6px 10px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.12)', outline: 'none', minWidth: '132px', flex: '1 1 132px' }} />
 
             <select
               value={selectedDraw?._id || ""}
@@ -3339,7 +3385,7 @@ function Center() {
                   toast.error('Time slot is closed');
                 }
               }}
-              style={{ background: 'transparent', color: selectedDraw ? '#000' : '#fff', padding: '6px 10px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.08)', minWidth: '170px', flex: '1 1 170px' }}
+              style={{ background: 'transparent', color: selectedDraw ? '#000' : '#fff', padding: '6px 10px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.08)', minWidth: '148px', flex: '1 1 148px' }}
             >
               <option value="" style={{ color: '#fff' }}>-- Select Time Slot --</option>
               {Array.isArray(draws) && draws.slice().sort((a,b)=>{
@@ -3365,17 +3411,51 @@ function Center() {
       </Box> 
 
       {/* Two-column section: left = Table, right = Action Buttons */}
-      <Box sx={{ width: '100%', maxWidth: 1280, mx: 0, display: 'flex', flexDirection: { xs: 'column', lg: 'row' }, gap: { xs: 2, lg: 3 }, alignItems: 'stretch', mt: 3, px: { xs: 1.25, sm: 2 } }}>
+      <Box sx={{ width: '100%', maxWidth: 1320, mx: 0, display: 'flex', flexDirection: { xs: 'column', lg: 'row' }, gap: { xs: 2, lg: 2 }, alignItems: 'stretch', mt: 1.75, px: { xs: 1.25, sm: 2 } }}>
         <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Paper elevation={3} sx={{ bgcolor: '#111318', color: '#F9FAFB', minHeight: '62vh', p: 3, borderRadius: 2, display: 'flex', flexDirection: 'column', border: '1px solid rgba(255,255,255,0.08)' }}>
+          <Paper
+            elevation={3}
+            sx={{
+              bgcolor: '#111318',
+              color: '#F9FAFB',
+              minHeight: { xs: '54vh', md: '56vh' },
+              height: { xs: 'auto', lg: 'calc(100vh - 205px)' },
+              maxHeight: { lg: 'calc(100vh - 175px)' },
+              p: { xs: 1.35, md: 1.5 },
+              borderRadius: 2,
+              display: 'flex',
+              flexDirection: 'column',
+              border: '1px solid rgba(255,255,255,0.08)',
+              overflow: 'hidden',
+            }}
+          >
 
             {/* Table Header */}
-            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-                <Button variant="contained" color="error" onClick={openDeleteSelectedConfirm} sx={{ fontSize: 14, fontWeight: 600, letterSpacing: 0.2 }}>Delete Selected</Button>
-                <Button variant="contained" color="success" onClick={handleCopySelected} sx={{ fontSize: 14, fontWeight: 600, letterSpacing: 0.2 }}>Copy</Button>
-                <Button variant="contained" color="primary" onClick={handlePasteCopied} sx={{ fontSize: 14, fontWeight: 600, letterSpacing: 0.2 }}>Paste</Button>
-                <Button variant="contained" color="secondary" onClick={() => { setSmsInput(""); setParsedEntries([]); setShowModal(true); }} sx={{ fontSize: 14, fontWeight: 600, letterSpacing: 0.2 }}>Paste SMS</Button>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.75, flexShrink: 0 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: { xs: 'wrap', lg: 'nowrap' } }}>
+                <Button variant="contained" color="error" onClick={openDeleteSelectedConfirm} disabled={isDistributorSearchView} sx={{ fontSize: 14, fontWeight: 600, letterSpacing: 0.2, px: 2 }}>Delete Selected</Button>
+                <Button variant="contained" color="success" onClick={handleCopySelected} sx={{ fontSize: 14, fontWeight: 600, letterSpacing: 0.2, px: 2 }}>Copy</Button>
+                <Button variant="contained" color="primary" onClick={handlePasteCopied} sx={{ fontSize: 14, fontWeight: 600, letterSpacing: 0.2, px: 2 }}>Paste</Button>
+                <Button variant="contained" color="secondary" onClick={() => { setSmsInput(""); setParsedEntries([]); setShowModal(true); }} sx={{ fontSize: 14, fontWeight: 600, letterSpacing: 0.2, px: 2 }}>Paste SMS</Button>
+                <TextField
+                  size="small"
+                  label="Search Number"
+                  value={searchNumber}
+                  onChange={(e) => setSearchNumber(e.target.value)}
+                  placeholder="Type NO..."
+                  sx={{
+                    minWidth: { xs: 180, sm: 200 },
+                    '& .MuiOutlinedInput-root': {
+                      color: '#fff',
+                      backgroundColor: 'rgba(255,255,255,0.03)',
+                      '& fieldset': { borderColor: 'rgba(255,255,255,0.18)' },
+                      '&:hover fieldset': { borderColor: 'rgba(255,255,255,0.30)' },
+                      '&.Mui-focused fieldset': { borderColor: '#60A5FA' },
+                    },
+                    '& .MuiInputLabel-root': { color: 'rgba(255,255,255,0.72)' },
+                  }}
+                  InputLabelProps={{ sx: { color: 'rgba(255,255,255,0.72)' } }}
+                />
               </Box>
             </Box>
 
@@ -3383,32 +3463,35 @@ function Center() {
               const flat = Object.entries(groupedEntries).reverse().flatMap(([parentId, group]) =>
                 group.map((entry, idx) => ({ ...entry, parentId, isGroupStart: idx === 0 }))
               );
+              const noDataMessage = isSearchActive
+                ? (searchLoading ? 'Searching entries...' : 'No matching NO entries found.')
+                : 'No records found for the selected time slot / date.';
 
               if (!flat || flat.length === 0) {
                 return (
-                  <TableContainer
-                    ref={tableContainerRef}
-                    sx={{
-                      flex: 1,
-                      height: 320,
-                      minHeight: 260,
-                      maxHeight: '56vh',
-                      overflowY: 'auto',
-                      overflowX: 'auto',
-                      scrollBehavior: 'smooth',
-                      border: '1px solid rgba(255,255,255,0.14)',
-                      borderRadius: 1.5,
-                      bgcolor: '#0E1117',
-                      pb: 1,
-                    }}
-                  >
+                    <TableContainer
+                      ref={tableContainerRef}
+                      sx={{
+                        flex: 1,
+                        height: '100%',
+                        minHeight: 0,
+                        overflowY: 'auto',
+                        overflowX: 'auto',
+                        scrollBehavior: 'smooth',
+                        border: '1px solid rgba(255,255,255,0.14)',
+                        borderRadius: 1.5,
+                        bgcolor: '#0E1117',
+                        pb: 0,
+                      }}
+                    >
                     <Table stickyHeader size="small" sx={{ tableLayout: 'fixed', minWidth: 620 }}>
                       <colgroup>
                         <col style={{ width: '56px' }} />
-                        <col style={{ width: '46%' }} />
+                        <col style={{ width: isDistributorSearchView ? '38%' : '46%' }} />
                         <col style={{ width: '16%' }} />
                         <col style={{ width: '16%' }} />
-                        <col style={{ width: '18%' }} />
+                        {isDistributorSearchView && <col style={{ width: '18%' }} />}
+                        <col style={{ width: isDistributorSearchView ? '12%' : '18%' }} />
                       </colgroup>
                       <TableHead>
                         <TableRow>
@@ -3418,13 +3501,16 @@ function Center() {
                           <TableCell sx={{ bgcolor: '#161B22', color: '#F3F4F6', fontSize: '0.92rem', fontWeight: 600, position: 'sticky', top: 0, zIndex: 2 }}>Number</TableCell>
                           <TableCell align="right" sx={{ bgcolor: '#161B22', color: '#F3F4F6', fontSize: '0.92rem', fontWeight: 600, position: 'sticky', top: 0, zIndex: 2 }}>1st</TableCell>
                           <TableCell align="right" sx={{ bgcolor: '#161B22', color: '#F3F4F6', fontSize: '0.92rem', fontWeight: 600, position: 'sticky', top: 0, zIndex: 2 }}>2nd</TableCell>
+                          {isDistributorSearchView && (
+                            <TableCell sx={{ bgcolor: '#161B22', color: '#F3F4F6', fontSize: '0.92rem', fontWeight: 600, position: 'sticky', top: 0, zIndex: 2 }}>Client</TableCell>
+                          )}
                           <TableCell align="center" sx={{ bgcolor: '#161B22', color: '#F3F4F6', fontSize: '0.92rem', fontWeight: 600, position: 'sticky', top: 0, zIndex: 2 }}>Action</TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
                         <TableRow>
-                          <TableCell colSpan={5} sx={{ textAlign: 'center', py: 6, color: 'grey.400' }}>
-                            No records found for the selected time slot / date.
+                          <TableCell colSpan={isDistributorSearchView ? 6 : 5} sx={{ textAlign: 'center', py: 6, color: 'grey.400' }}>
+                            {noDataMessage}
                           </TableCell>
                         </TableRow>
                       </TableBody>
@@ -3433,30 +3519,30 @@ function Center() {
                 );
               }
 
-              const computedHeight = Math.min(Math.max((flat.length * 52) + 56, 260), listHeight);
               return (
                 <TableContainer
                   ref={tableContainerRef}
                   sx={{
                     flex: 1,
-                    height: Math.max(260, computedHeight),
-                    maxHeight: '56vh',
+                    height: '100%',
+                    minHeight: 0,
                     overflowY: 'auto',
                     overflowX: 'auto',
                     scrollBehavior: 'smooth',
                     border: '1px solid rgba(255,255,255,0.14)',
                     borderRadius: 1.5,
                     bgcolor: '#0E1117',
-                    pb: 1,
+                    pb: 0,
                   }}
                 >
-                  <Table stickyHeader size="small" sx={{ tableLayout: 'fixed', minWidth: 620, '& .MuiTableRow-root': { height: 52 } }}>
+                  <Table stickyHeader size="small" sx={{ tableLayout: 'fixed', minWidth: 620, '& .MuiTableRow-root': { height: { xs: 48, lg: 46 } } }}>
                     <colgroup>
                       <col style={{ width: '56px' }} />
-                      <col style={{ width: '46%' }} />
+                      <col style={{ width: isDistributorSearchView ? '38%' : '46%' }} />
                       <col style={{ width: '16%' }} />
                       <col style={{ width: '16%' }} />
-                      <col style={{ width: '18%' }} />
+                      {isDistributorSearchView && <col style={{ width: '18%' }} />}
+                      <col style={{ width: isDistributorSearchView ? '12%' : '18%' }} />
                     </colgroup>
                     <TableHead>
                       <TableRow>
@@ -3484,14 +3570,17 @@ function Center() {
                         <TableCell sx={{ bgcolor: '#161B22', color: '#F3F4F6', fontSize: '0.92rem', fontWeight: 600, position: 'sticky', top: 0, zIndex: 2 }}>Number</TableCell>
                         <TableCell align="right" sx={{ bgcolor: '#161B22', color: '#F3F4F6', fontSize: '0.92rem', fontWeight: 600, position: 'sticky', top: 0, zIndex: 2 }}>1st</TableCell>
                         <TableCell align="right" sx={{ bgcolor: '#161B22', color: '#F3F4F6', fontSize: '0.92rem', fontWeight: 600, position: 'sticky', top: 0, zIndex: 2 }}>2nd</TableCell>
+                        {isDistributorSearchView && (
+                          <TableCell sx={{ bgcolor: '#161B22', color: '#F3F4F6', fontSize: '0.92rem', fontWeight: 600, position: 'sticky', top: 0, zIndex: 2 }}>Client</TableCell>
+                        )}
                         <TableCell align="center" sx={{ bgcolor: '#161B22', color: '#F3F4F6', fontSize: '0.92rem', fontWeight: 600, position: 'sticky', top: 0, zIndex: 2 }}>Action</TableCell>
                       </TableRow>
                     </TableHead>
                     <TableBody sx={{ '& .MuiTableRow-root:nth-of-type(odd)': { bgcolor: 'rgba(255,255,255,0.02)' }, '& .MuiTableRow-root:hover': { bgcolor: 'rgba(96,165,250,0.08)' } }}>
                       {flat.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={5} sx={{ textAlign: 'center', py: 6, color: 'grey.400' }}>
-                            No records found for the selected time slot / date.
+                          <TableCell colSpan={isDistributorSearchView ? 6 : 5} sx={{ textAlign: 'center', py: 6, color: 'grey.400' }}>
+                            {noDataMessage}
                           </TableCell>
                         </TableRow>
                       ) : (
@@ -3503,8 +3592,13 @@ function Center() {
                             <TableCell sx={{ color: '#FFFFFF', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '0.98rem', fontWeight: 500 }}>{row.no}</TableCell>
                             <TableCell align="right" sx={{ color: '#FFFFFF', fontSize: '0.98rem', fontWeight: 500 }}>{row.f}</TableCell>
                             <TableCell align="right" sx={{ color: '#FFFFFF', fontSize: '0.98rem', fontWeight: 500 }}>{row.s}</TableCell>
+                            {isDistributorSearchView && (
+                              <TableCell sx={{ color: '#E5E7EB', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '0.92rem' }}>
+                                {row.clientName || '-'}
+                              </TableCell>
+                            )}
                             <TableCell align="center">
-                              {row.isGroupStart && (
+                              {row.isGroupStart && !isDistributorSearchView && (
                                 <IconButton aria-label="delete" size="small" onClick={() => openDeleteConfirm(row.parentId)} sx={{ bgcolor: 'error.main', color: 'common.white', '&:hover': { bgcolor: 'error.dark' }, minWidth: 40, height: 32, borderRadius: 1 }}>
                                   <DeleteIcon fontSize="small" />
                                 </IconButton>
@@ -3525,9 +3619,9 @@ function Center() {
                 <Typography variant="body2" sx={{ color: 'grey.300' }}>Distributors cannot add entries from this panel.</Typography>
               </Paper>
             ) : (
-              <Box component="form" onSubmit={(e) => { e.preventDefault(); handleSingleEntrySubmit(); }} sx={{ mt: 1.5, pt: 1.5, overflowX: 'hidden', bgcolor: 'grey.800', p: 2, borderTop: '1px solid rgba(255,255,255,0.12)' }}>
-                <Box sx={{ display: 'flex', alignItems: { xs: 'stretch', md: 'center' }, justifyContent: 'space-between', gap: { xs: 1.25, md: 2, lg: 2.5 }, flexWrap: { xs: 'wrap', lg: 'nowrap' } }}>
-                  <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(130px, 1fr))', lg: 'minmax(220px, 1.2fr) minmax(165px, 1fr) minmax(165px, 1fr)' }, gap: 1.5, flex: 1, minWidth: 0 }}>
+              <Box component="form" onSubmit={(e) => { e.preventDefault(); handleSingleEntrySubmit(); }} sx={{ mt: 0.5, pt: 0.5, overflowX: 'hidden', bgcolor: 'grey.800', p: 1.1, borderTop: '1px solid rgba(255,255,255,0.12)', position: 'sticky', bottom: 0, zIndex: 6, flexShrink: 0, boxShadow: '0 -8px 20px rgba(0,0,0,0.45)' }}>
+                <Box sx={{ display: 'flex', alignItems: { xs: 'stretch', md: 'center' }, justifyContent: 'space-between', gap: { xs: 1, md: 1.25, lg: 1.5 }, flexWrap: { xs: 'wrap', lg: 'nowrap' } }}>
+                  <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(130px, 1fr))', lg: 'minmax(180px, 1.15fr) minmax(125px, 1fr) minmax(125px, 1fr)' }, gap: 1, flex: 1, minWidth: 0 }}>
                     <TextField
                       inputRef={noInputRef}
                       value={no}
@@ -3573,8 +3667,8 @@ function Center() {
                           color: '#fff',
                           backgroundColor: 'rgba(255,255,255,0.02)',
                           borderRadius: 1,
-                          minHeight: 44,
-                          height: 44,
+                          minHeight: 42,
+                          height: 42,
                           '& fieldset': { borderColor: 'rgba(255,255,255,0.08)' },
                           '&:hover fieldset': { borderColor: 'rgba(255,255,255,0.14)' },
                           '&.Mui-focused fieldset': { borderColor: 'rgba(255,255,255,0.25)' },
@@ -3603,8 +3697,8 @@ function Center() {
                           color: '#fff',
                           backgroundColor: 'rgba(255,255,255,0.02)',
                           borderRadius: 2,
-                          minHeight: 44,
-                          height: 44,
+                          minHeight: 42,
+                          height: 42,
                           '& fieldset': { borderColor: 'rgba(255,255,255,0.08)' },
                           '&:hover fieldset': { borderColor: 'rgba(255,255,255,0.14)' },
                           '&.Mui-focused fieldset': { borderColor: 'rgba(255,255,255,0.25)' },
@@ -3633,8 +3727,8 @@ function Center() {
                           color: '#fff',
                           backgroundColor: 'rgba(255,255,255,0.02)',
                           borderRadius: 1,
-                          minHeight: 44,
-                          height: 44,
+                          minHeight: 42,
+                          height: 42,
                           '& fieldset': { borderColor: 'rgba(255,255,255,0.08)' },
                           '&:hover fieldset': { borderColor: 'rgba(255,255,255,0.14)' },
                           '&.Mui-focused fieldset': { borderColor: 'rgba(255,255,255,0.25)' },
@@ -3647,13 +3741,13 @@ function Center() {
                       InputLabelProps={{ sx: { color: 'rgba(255,255,255,0.78)' } }}
                     />
                   </Box>
-                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: { xs: 'space-between', md: 'flex-end' }, gap: 1.25, width: { xs: '100%', md: 'auto' }, minWidth: { md: 220 }, flexShrink: 0, pl: { md: 1.25 }, borderLeft: { md: '1px solid rgba(255,255,255,0.08)' } }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: { xs: 'space-between', md: 'flex-end' }, gap: { xs: 1, md: 0.9 }, width: { xs: '100%', md: 'auto' }, minWidth: { md: 176 }, maxWidth: '100%', flexShrink: 1, pl: { md: 1 }, borderLeft: { md: '1px solid rgba(255,255,255,0.08)' } }}>
                     <FormControlLabel
                       control={<Switch checked={autoMode} onChange={toggleAutoMode} color="primary" />}
                       label="Auto Mode"
-                      sx={{ mr: 0, '& .MuiSwitch-root': { mr: 0.25 }, '& .MuiFormControlLabel-label': { fontSize: 14, fontWeight: 600, color: '#F3F4F6', lineHeight: 1, whiteSpace: 'nowrap' } }}
+                      sx={{ mr: 0, ml: 0, maxWidth: '100%', '& .MuiSwitch-root': { mr: 0 }, '& .MuiFormControlLabel-label': { fontSize: { xs: 13, md: 13.5 }, fontWeight: 600, color: '#F3F4F6', lineHeight: 1, whiteSpace: 'nowrap' } }}
                     />
-                    <Button type="submit" variant="contained" color="success" disabled={isPastClosingTime()} sx={{ fontSize: 14, fontWeight: 700, px: 2.2, height: 44, minWidth: 88 }}>
+                    <Button type="submit" variant="contained" color="success" disabled={isPastClosingTime()} sx={{ fontSize: 14, fontWeight: 700, px: 1.8, height: 42, minWidth: 80 }}>
                       Save
                     </Button>
                   </Box>

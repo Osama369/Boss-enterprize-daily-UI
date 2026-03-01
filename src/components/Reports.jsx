@@ -1036,7 +1036,9 @@ const Reports = () => {
         // ignore
       }
 
-      doc.save("Voucher_Sheet_by_Sections_RLC.pdf");
+      const voucherSlotLabel = selectedDraw ? formatTimeSlotLabel(selectedDraw) : (drawTime || "TimeSlot");
+      const safeVoucherSlot = String(voucherSlotLabel).replace(/\s+/g, "_").replace(/[^A-Za-z0-9_-]/g, "") || "TimeSlot";
+      doc.save(`Sale_Voucher_Sheet_${safeVoucherSlot}_RLC.pdf`);
       toast.success("Voucher PDF by sections downloaded successfully!");
   };
 
@@ -1231,7 +1233,6 @@ const Reports = () => {
         grandTotals.commission += commissionAmount;
         grandTotals.payable += netPayable;
         grandTotals.winningAmount += totalWinningAmount;
-        grandTotals.firstWinning += firstWinningAmount;
         grandTotals.secondWinning += secondWinningAmount;
   
         // Section title
@@ -1457,7 +1458,9 @@ const Reports = () => {
       }
       renderGrandTotals(nextY);
   
-      doc.save("Ledger_Sheet_RLC.pdf");
+      const ledgerSlotLabel = selectedDraw ? formatTimeSlotLabel(selectedDraw) : (drawTime || "TimeSlot");
+      const safeLedgerSlot = String(ledgerSlotLabel).replace(/\s+/g, "_").replace(/[^A-Za-z0-9_-]/g, "") || "TimeSlot";
+      doc.save(`Ledger_Sheet_RLC_${safeLedgerSlot}.pdf`);
       toast.success("Ledger PDF downloaded successfully!");
   };
 
@@ -1550,7 +1553,8 @@ const Reports = () => {
       doc.rect(x, y - 5, right - x, 9);
       doc.text(`Bill: ${formatCurrency(totals.bill)}`, x + 2, y + 1.5);
 
-      doc.save("Daily_Bill_RLC.pdf");
+      const safeDate = String(drawDate || '').trim().replace(/[^\d-]/g, '') || new Date().toISOString().split('T')[0];
+      doc.save(`Daily_Bill_RLC_${safeDate}.pdf`);
       toast.success("Daily Bill PDF downloaded successfully!");
   };
 
