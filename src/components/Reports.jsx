@@ -438,6 +438,16 @@ const Reports = () => {
   const checkPositionalMatch = (entry, winningNumber) => {
     // Remove any spaces and ensure consistent format
     const cleanEntry = entry.toString().trim();
+    const win = String(winningNumber ?? '').trim().padStart(4, '0').slice(-4);
+
+    // Strict single-digit positional rules:
+    // 7 -> pos1, +7 -> pos2, ++7 -> pos3, +++7 -> pos4
+    const strictSingleDigit = cleanEntry.match(/^(\+{0,3})(\d)$/);
+    if (strictSingleDigit) {
+      const plusCount = strictSingleDigit[1].length;
+      const digit = strictSingleDigit[2];
+      return win[plusCount] === digit;
+    }
 
     // if (!cleanEntry.includes('+')) {
     //   // For plain numbers, only check if they are exact substrings of winning number

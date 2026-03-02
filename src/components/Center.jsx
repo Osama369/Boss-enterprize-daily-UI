@@ -40,6 +40,7 @@ function Center() {
   const voucherDataRef = useRef([]);
   const [selectedEntries, setSelectedEntries] = useState([]);
   const tableContainerRef = useRef(null);
+  const prevEntriesCountRef = useRef(0);
   const [searchNumber, setSearchNumber] = useState("");
   const [searchResults, setSearchResults] = useState(null); // null => search inactive
   const [searchLoading, setSearchLoading] = useState(false);
@@ -139,6 +140,23 @@ function Center() {
     };
   }, [fetchTimeSlots]);
 
+  const syncBalance = useCallback(async (candidateBalance) => {
+    if (candidateBalance !== undefined && candidateBalance !== null) {
+      const parsed = Number(candidateBalance);
+      const nextBalance = Number.isNaN(parsed) ? candidateBalance : parsed;
+      dispatch(setUser({ ...(userData?.user || {}), balance: nextBalance }));
+      return;
+    }
+    const userId = userData?.user?._id;
+    if (!userId) return;
+    try {
+      const response = await axios.get(`/api/v1/users/${userId}`);
+      dispatch(setUser(response.data));
+    } catch (error) {
+      console.warn("Failed to sync balance", error);
+    }
+  }, [dispatch, userData?.user]);
+
 
   const addEntry = async (customeEntries = null) => {
     const dataToAdd = customeEntries || entries;
@@ -194,6 +212,7 @@ function Center() {
       const response = await axios.post("/api/v1/data/add-data", payload, {
         // timeout: 10000,
       });
+      await syncBalance(response.data?.newBalance);
 
       // If server returns created data, reconcile quickly
       const created = response.data?.data || response.data?.created || null;
@@ -210,16 +229,16 @@ function Center() {
           }))
         );
 
-        // Replace temp items for matching uniqueIds, otherwise prepend created rows
+        // Replace temp items for matching uniqueIds, keep newest rows appended at bottom
         setVoucherData(prevArr => {
           const uniqueIds = new Set(createdRows.map(r => r.no));
           const remaining = prevArr.filter(p => !p._tempId || !uniqueIds.has(p.no));
-          return [...createdRows, ...remaining];
+          return [...remaining, ...createdRows];
         });
         setEntries(prev => {
           const uniqueIds = new Set(createdRows.map(r => r.no));
           const remaining = prev.filter(p => !p._tempId || !uniqueIds.has(p.no));
-          return [...createdRows, ...remaining];
+          return [...remaining, ...createdRows];
         });
       }
 
@@ -352,6 +371,20 @@ function Center() {
   const isDistributorSearchView = role === "distributor" && isSearchActive;
   const tableEntries = isSearchActive ? (searchResults || []) : entries;
 
+  // Keep the latest appended entry visible.
+  useEffect(() => {
+    const container = tableContainerRef.current;
+    if (!container) return;
+    const hasNewRows = entries.length > prevEntriesCountRef.current;
+    prevEntriesCountRef.current = entries.length;
+    if (!hasNewRows) return;
+    if (isSearchActive) return;
+    const rafId = window.requestAnimationFrame(() => {
+      container.scrollTop = container.scrollHeight;
+    });
+    return () => window.cancelAnimationFrame(rafId);
+  }, [entries.length, isSearchActive]);
+
   const groupedEntries = tableEntries.reduce((acc, entry) => {
     if (!acc[entry.parentId]) {
       acc[entry.parentId] = [];
@@ -401,9 +434,9 @@ function Center() {
           setSearchLoading(false);
         }
       } else {
-        const needle = q.toLowerCase();
+        const needle = String(q || '').trim();
         const localRows = (entries || []).filter((entry) =>
-          String(entry.no || "").toLowerCase().includes(needle)
+          String(entry.no || "").trim() === needle
         );
         setSearchResults(localRows);
       }
@@ -449,17 +482,19 @@ function Center() {
   const performDelete = async () => {
     setIsDeleting(true);
     try {
+      let deleteResponse;
       if (deleteDialogMode === 'single') {
-        await axios.delete(`/api/v1/data/delete-data/${deleteTargetId}`);
+        deleteResponse = await axios.delete(`/api/v1/data/delete-data/${deleteTargetId}`);
         toast.success('Record deleted successfully');
       } else if (deleteDialogMode === 'multiple') {
-        await axios.delete(`/api/v1/data/delete-individual-entries`, {
+        deleteResponse = await axios.delete(`/api/v1/data/delete-individual-entries`, {
           data: { entryIds: selectedEntries }
         });
         toast.success('Selected records deleted successfully');
         setSelectedEntries([]);
         setSelectAll(false);
       }
+      await syncBalance(deleteResponse?.data?.newBalance);
 
       // Refresh data
       await fetchVoucherData();
@@ -2902,6 +2937,16 @@ function Center() {
   const checkPositionalMatch = (entry, winningNumber) => {
     // Remove any spaces and ensure consistent format
     const cleanEntry = entry.toString().trim();
+    const win = String(winningNumber ?? '').trim().padStart(4, '0').slice(-4);
+
+    // Strict single-digit positional rules:
+    // 7 -> pos1, +7 -> pos2, ++7 -> pos3, +++7 -> pos4
+    const strictSingleDigit = cleanEntry.match(/^(\+{0,3})(\d)$/);
+    if (strictSingleDigit) {
+      const plusCount = strictSingleDigit[1].length;
+      const digit = strictSingleDigit[2];
+      return win[plusCount] === digit;
+    }
 
     // if (!cleanEntry.includes('+')) {
     //   // For plain numbers, only check if they are exact substrings of winning number
@@ -3460,7 +3505,7 @@ function Center() {
             </Box>
 
             {(() => {
-              const flat = Object.entries(groupedEntries).reverse().flatMap(([parentId, group]) =>
+              const flat = Object.entries(groupedEntries).flatMap(([parentId, group]) =>
                 group.map((entry, idx) => ({ ...entry, parentId, isGroupStart: idx === 0 }))
               );
               const noDataMessage = isSearchActive
