@@ -165,6 +165,17 @@ function Center() {
       return;
     }
 
+    // Enforce minimum amount rule for both F and S
+    const hasInvalidAmount = dataToAdd.some((entry) => {
+      const first = Number(entry?.f);
+      const second = Number(entry?.s);
+      return !Number.isFinite(first) || !Number.isFinite(second) || first < 5 || second < 5;
+    });
+    if (hasInvalidAmount) {
+      toast.error("F and S amounts must be at least 5.");
+      return;
+    }
+
     // Format payload for API
     const formattedData = dataToAdd.map(entry => ({
       uniqueId: entry.no,
