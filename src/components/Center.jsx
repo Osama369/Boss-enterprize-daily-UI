@@ -165,6 +165,7 @@ function Center() {
       return;
     }
 
+
     // Enforce non-negative integer amounts for both F and S
     const hasInvalidAmount = dataToAdd.some((entry) => {
       const first = Number(entry?.f);
@@ -180,6 +181,16 @@ function Center() {
     });
     if (hasInvalidAmount) {
       toast.error("F and S must be 0 or positive");
+
+    // Enforce minimum amount rule for both F and S
+    const hasInvalidAmount = dataToAdd.some((entry) => {
+      const first = Number(entry?.f);
+      const second = Number(entry?.s);
+      return !Number.isFinite(first) || !Number.isFinite(second) || first < 5 || second < 5;
+    });
+    if (hasInvalidAmount) {
+      toast.error("F and S amounts must be at least 5.");
+
       return;
     }
 
@@ -3944,15 +3955,9 @@ function Center() {
       )}
       
     </div>
-   
-  
-
 
   );
+
 }
-
-
-
-
-
+}
 export default Center;
